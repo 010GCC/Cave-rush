@@ -20,39 +20,40 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 
 // ── Config ───────────────────────────────────────────────────
 const CFG = {
-  SEG_H:         4,       // cave segment height px
-  BASE_SCROLL:   2.6,     // px / frame base speed
-  LVL_INC:       0.10,    // +10% scroll per level
-  DRONE_SPD:     4.0,
-  SLOW_MULT:     0.40,
-  SLOW_DRAIN:    0.50,
-  SLOW_REGEN:    0.16,
-  SLOW_MAX:      100,
-  LEVEL_TIME:    90,      // seconds
-  MIN_GAP_L1:    175,
-  MAX_GAP:       310,
-  GAP_STEP:      12,      // gap reduction per level
-  WALL_LINES:    8,
-  PU_CHANCE:     0.0006,  // per-frame spawn chance
-  PU_AHEAD_MIN:  250,
-  PU_AHEAD_MAX:  600,
-  SHIELD_MS:     8000,
-  INVINCIBLE_MS: 2200,
-  MAX_LIVES:     5,
-  CRYSTAL_CHANCE:  0.003,
-  STALA_CHANCE:    0.00022,
-  MAGNET_MS:       6000,
-  MAGNET_RADIUS:   190,
-  BOOST_MULT:      1.78,
-  BOOST_AGILITY:   1.65,
-  BOOST_DURATION:  8000,
-  BOOST_HEAT_CD:   5500,
-  BOOST_DECAY_MS:  1600,  // glide-back duration after boost
-  FIRE_RATE:       175,   // ms between shots
-  BULLET_SPD:      9.5,
-  WEAPON_MS:       10000,
-  ENEMY_BULLET_SPD:3.6,
-  WAVE_INTERVAL:   13000,
+  SEG_H:            4,       // cave segment height px
+  BASE_SCROLL:      4.5,     // px / frame base speed (= old boost speed)
+  LVL_INC:          0.10,    // +10% scroll per level
+  DRONE_SPD:        4.8,
+  SLOW_MULT:        0.40,
+  SLOW_DRAIN:       0.50,
+  SLOW_REGEN:       0.16,
+  SLOW_MAX:         100,
+  LEVEL_TIME:       90,      // seconds
+  MIN_GAP_L1:       175,
+  MAX_GAP:          310,
+  GAP_STEP:         12,      // gap reduction per level
+  WALL_LINES:       8,
+  PU_CHANCE:        0.0006,  // per-frame spawn chance
+  PU_AHEAD_MIN:     250,
+  PU_AHEAD_MAX:     600,
+  SHIELD_MS:        8000,
+  INVINCIBLE_MS:    2200,
+  MAX_LIVES:        5,
+  CRYSTAL_CHANCE:   0.003,
+  STALA_CHANCE:     0.00022,
+  MAGNET_MS:        6000,
+  MAGNET_RADIUS:    190,
+  BOOST_MULT:       1.35,    // extra speed while boosting
+  BOOST_AGILITY:    1.5,
+  BOOST_FUEL_MAX:   30000,   // 30s total fuel (20s safe + 10s warning)
+  BOOST_WARN_AT:    10000,   // warning when <10s of fuel left (=20s used)
+  BOOST_REGEN_RATE: 2.0,     // fuel regens 2x faster than it drains
+  BOOST_FAIL_MULT:  0.56,    // speed mult during engine failure (~old default speed)
+  FIRE_RATE:        175,     // ms between shots
+  BULLET_SPD:       9.5,
+  WEAPON_MS:        10000,
+  ENEMY_BULLET_SPD: 3.6,
+  WAVE_INTERVAL:    9000,    // ms between waves
 };
 
 // ── Utility ──────────────────────────────────────────────────
@@ -300,8 +301,8 @@ class Drone {
     this.magnet      = false;
     this.magnetMs    = 0;
     this.boosting    = false;
-    this.boostMs     = 0;
-    this.heatMs      = 0;
+    this.boostFuel   = CFG.BOOST_FUEL_MAX;   // ms of fuel remaining
+    this.boostFailing= false;                 // true when fuel empty + still held
     this.weapon      = 'default';  // 'default'|'spread'|'homing'|'explosive'
     this.weaponMs    = 0;
     this.fireTimer   = 0;
@@ -345,13 +346,14 @@ class Drone {
       this.magnetMs -= dt;
       if (this.magnetMs <= 0) { this.magnet = false; this.magnetMs = 0; }
     }
-    if (this.boosting) {
-      this.boostMs -= dt;
-      if (this.boostMs <= 0) { this.boosting = false; this.boostMs = 0; this.heatMs = CFG.BOOST_HEAT_CD; }
-    }
-    if (this.heatMs > 0) {
-      this.heatMs -= dt;
-      if (this.heatMs < 0) this.heatMs = 0;
+    if (KEY.boost) {
+      this.boostFuel   = Math.max(0, this.boostFuel - dt);
+      this.boosting    = this.boostFuel > 0;
+      this.boostFailing= this.boostFuel <= 0;
+    } else {
+      this.boostFuel   = Math.min(CFG.BOOST_FUEL_MAX, this.boostFuel + dt * CFG.BOOST_REGEN_RATE);
+      this.boosting    = false;
+      this.boostFailing= false;
     }
     if (this.weaponMs > 0) {
       this.weaponMs -= dt;
@@ -963,25 +965,27 @@ class DPad {
     ctx.fillText('SLOW', scx, scy);
 
     // ── BOOST button ──
-    const ba      = KEY.boost;
-    const heating = drone && drone.heatMs > 0;
-    const bActive = drone && drone.boosting;
-    const boostBorderColor = heating ? '#ff3300' : (bActive ? '#44aaff' : '#ff8800');
-    ctx.fillStyle   = bActive ? '#001a3a' : (heating ? '#220500' : '#1a0c00');
-    ctx.strokeStyle = boostBorderColor;
+    const ba       = KEY.boost;
+    const bActive  = drone && drone.boosting;
+    const bFail    = drone && drone.boostFailing;
+    const bWarn    = drone && !bFail && drone.boostFuel < CFG.BOOST_WARN_AT;
+    const bBorderC = bFail ? '#ff2200' : (bWarn ? '#ff8800' : (bActive ? '#44aaff' : '#ff8800'));
+    ctx.fillStyle   = bFail ? '#2a0000' : (bActive ? '#001a3a' : '#1a0c00');
+    ctx.strokeStyle = bBorderC;
     ctx.lineWidth   = (ba || bActive) ? 2.5 : 1.5;
-    ctx.shadowBlur  = (ba || bActive) ? 12 : 0;
-    ctx.shadowColor = boostBorderColor;
+    ctx.shadowBlur  = (bFail || bActive) ? 12 : 0;
+    ctx.shadowColor = bBorderC;
     ctx.beginPath();
     ctx.arc(boostx, boosty, boostr, 0, Math.PI*2);
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
 
-    ctx.fillStyle    = heating ? '#ff4400' : (bActive ? '#44ccff' : '#ffaa44');
-    ctx.font         = `bold ${Math.round(boostr * 0.36)}px 'Courier New'`;
+    const bLabel = bFail ? 'FAIL!' : (bWarn ? 'WARN' : 'BOOST');
+    ctx.fillStyle    = bFail ? '#ff4400' : (bWarn ? '#ffaa00' : (bActive ? '#44ccff' : '#ffaa44'));
+    ctx.font         = `bold ${Math.round(boostr * 0.34)}px 'Courier New'`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(heating ? 'HEAT' : 'BOOST', boostx, boosty);
+    ctx.fillText(bLabel, boostx, boosty);
 
     ctx.restore();
   }
@@ -1324,10 +1328,12 @@ function drawFuelBar(fuel) {
 
 // ── Boost Bar ─────────────────────────────────────────────────
 function drawBoostBar(drone) {
-  const bx  = W - 38;   // next to fuel bar
+  const bx  = W - 38;
   const by  = H - 172;
   const bw  = 10;
   const bh  = 78;
+  const pct = drone.boostFuel / CFG.BOOST_FUEL_MAX;
+  const t   = Date.now() * 0.009;
 
   ctx.fillStyle = '#001008';
   ctx.fillRect(bx, by, bw, bh);
@@ -1335,25 +1341,37 @@ function drawBoostBar(drone) {
   ctx.lineWidth   = 1;
   ctx.strokeRect(bx, by, bw, bh);
 
-  if (drone.boosting && drone.boostMs > 0) {
-    const pct  = drone.boostMs / CFG.BOOST_DURATION;
-    const fh   = bh * pct;
-    const grad = ctx.createLinearGradient(0, by + bh - fh, 0, by + bh);
-    grad.addColorStop(0, '#44eeff');
-    grad.addColorStop(1, '#0055cc');
+  if (pct > 0) {
+    const fh      = bh * pct;
+    const warning = drone.boostFuel < CFG.BOOST_WARN_AT;
+    const pulse   = warning ? 0.65 + 0.35 * Math.abs(Math.sin(t * 1.6)) : 1;
+    const grad    = ctx.createLinearGradient(0, by + bh - fh, 0, by + bh);
+    if (drone.boostFailing) {
+      // red dregs
+      grad.addColorStop(0, `rgba(255,30,0,${pulse})`);
+      grad.addColorStop(1, `rgba(120,0,0,${pulse})`);
+    } else if (warning) {
+      grad.addColorStop(0, `rgba(255,${Math.floor(140 + 80 * pulse)},0,${pulse})`);
+      grad.addColorStop(1, `rgba(180,60,0,${pulse})`);
+    } else {
+      grad.addColorStop(0, '#44eeff');
+      grad.addColorStop(1, '#0055cc');
+    }
     ctx.fillStyle = grad;
-    ctx.fillRect(bx, by + bh - fh, bw, fh);
-  } else if (drone.heatMs > 0) {
-    const pct  = drone.heatMs / CFG.BOOST_HEAT_CD;
-    const fh   = bh * pct;
-    const t    = Date.now() * 0.008;
-    const heat = 0.6 + 0.4 * Math.sin(t);
-    ctx.fillStyle = `rgba(255,${Math.floor(60 + 40 * heat)},0,${heat})`;
     ctx.fillRect(bx, by + bh - fh, bw, fh);
   }
 
-  const lbl = drone.heatMs > 0 ? 'HEAT' : 'BOOST';
-  const lc  = drone.heatMs > 0 ? '#663300' : '#226633';
+  // warning threshold tick mark at 1/3 height (=10s/30s)
+  const warnY = by + bh - bh * (CFG.BOOST_WARN_AT / CFG.BOOST_FUEL_MAX);
+  ctx.strokeStyle = 'rgba(255,120,0,0.4)';
+  ctx.lineWidth   = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(bx, warnY); ctx.lineTo(bx + bw, warnY);
+  ctx.stroke();
+
+  const lbl = drone.boostFailing ? 'FAIL' : 'BOOST';
+  const lc  = drone.boostFailing ? '#ff3300' :
+               (drone.boostFuel < CFG.BOOST_WARN_AT ? '#ff8800' : '#226633');
   ctx.fillStyle    = lc;
   ctx.font         = '7px monospace';
   ctx.textAlign    = 'center';
@@ -1425,8 +1443,6 @@ class Game {
     this.parts        = [];
     this.ftexts       = [];
     this.waveTimer    = 0;
-    this.boostDecay   = 1;    // speed glide-back after boost
-    this.prevBoostKey = false;
     this.dpad         = new DPad();
     this.slines       = new SpeedLines();
 
@@ -1500,9 +1516,7 @@ class Game {
     this.enemyBullets = [];
     this.parts        = [];
     this.ftexts       = [];
-    this.waveTimer    = CFG.WAVE_INTERVAL * 0.55;  // first wave comes faster
-    this.boostDecay   = 1;
-    this.prevBoostKey = false;
+    this.waveTimer    = CFG.WAVE_INTERVAL * 0.45;  // first wave comes faster
     this.tLeft  = CFG.LEVEL_TIME;
     this.sFuel  = CFG.SLOW_MAX;
     this.scroll = CFG.BASE_SCROLL * Math.pow(1 + CFG.LVL_INC, this.level - 1);
@@ -1532,24 +1546,15 @@ class Game {
     this.tLeft -= dtS;
     if (this.tLeft <= 0) { this.tLeft = 0; this._levelDone(); return; }
 
-    // ── BOOST: one-shot 8-second trigger ──────────────────────
-    const boostRising = KEY.boost && !this.prevBoostKey;
-    this.prevBoostKey = KEY.boost;
-    if (boostRising && !this.drone.boosting && !this.drone.heatMs) {
-      this.drone.boosting = true;
-      this.drone.boostMs  = CFG.BOOST_DURATION;
-    }
-    // when boost just ended, seed the decay glide
-    if (!this.drone.boosting && this.boostDecay > 1) {
-      this.boostDecay = Math.max(1, this.boostDecay - (CFG.BOOST_MULT - 1) * dt / CFG.BOOST_DECAY_MS);
-    }
-    if (this.drone.boosting) this.boostDecay = CFG.BOOST_MULT;
-
     // slow fuel
     const slowOn = KEY.slow && this.sFuel > 0;
     this.sFuel = clamp(this.sFuel + (slowOn ? -CFG.SLOW_DRAIN : CFG.SLOW_REGEN), 0, CFG.SLOW_MAX);
-    const boostMult  = this.drone.boosting ? CFG.BOOST_MULT : this.boostDecay;
-    const effScroll  = this.scroll * boostMult * (slowOn ? CFG.SLOW_MULT : 1);
+
+    // boost speed multiplier — failure drops to ~old default speed
+    let boostMult = 1;
+    if (this.drone.boostFailing)  boostMult = CFG.BOOST_FAIL_MULT;
+    else if (this.drone.boosting) boostMult = CFG.BOOST_MULT;
+    const effScroll = this.scroll * boostMult * (slowOn ? CFG.SLOW_MULT : 1);
 
     // cave advance
     this.cave.update(effScroll);
@@ -1642,10 +1647,10 @@ class Game {
     // ── ENEMY WAVES ───────────────────────────────────────────
     this.waveTimer -= dt;
     if (this.waveTimer <= 0) {
-      const waveSize = Math.min(2 + Math.floor(this.level * 0.7), 7);
-      const mixed    = this.level >= 3;
+      const waveSize = Math.min(4 + Math.floor(this.level * 1.4), 16);
+      const mixed    = this.level >= 2;
       for (let i = 0; i < waveSize; i++) {
-        const type = mixed && Math.random() < 0.35 ? 'gunship' : 'scout';
+        const type = mixed && Math.random() < 0.42 ? 'gunship' : 'scout';
         const e    = new Enemy(type, this.cave);
         e.x = rand(60, W - 60);
         e.y = -30 - i * 45;
@@ -1856,25 +1861,47 @@ class Game {
       drawFuelBar(this.sFuel);
       drawBoostBar(this.drone);
 
-      // heat warning overlay
-      if (this.drone.heatMs > 0) {
-        const t     = Date.now() * 0.009;
-        const pulse = 0.12 + 0.1 * Math.abs(Math.sin(t));
-        ctx.fillStyle = `rgba(255,60,0,${pulse})`;
+      // boost overlays
+      const t   = Date.now() * 0.009;
+      const bFuel = this.drone.boostFuel;
+      if (this.drone.boostFailing) {
+        // engine failure — heavy red pulse + warning text
+        const pulse = 0.14 + 0.12 * Math.abs(Math.sin(t * 1.8));
+        ctx.fillStyle = `rgba(255,30,0,${pulse})`;
         ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle    = `rgba(255,120,0,${0.55 + 0.35 * Math.abs(Math.sin(t))})`;
-        ctx.font         = `bold ${clamp(W * 0.055, 16, 26)}px 'Courier New'`;
+        ctx.fillStyle    = `rgba(255,80,0,${0.7 + 0.3 * Math.abs(Math.sin(t * 2))})`;
+        ctx.font         = `bold ${clamp(W * 0.052, 15, 24)}px 'Courier New'`;
         ctx.textAlign    = 'center';
         ctx.textBaseline = 'top';
-        ctx.shadowBlur   = 12;
-        ctx.shadowColor  = '#ff4400';
-        ctx.fillText('⚠ ENGINE HEAT ⚠', W / 2, 44);
+        ctx.shadowBlur   = 14;
+        ctx.shadowColor  = '#ff2200';
+        ctx.fillText('★ ENGINE FAILURE — RELEASE BOOST ★', W / 2, 44);
         ctx.shadowBlur   = 0;
-      }
-
-      // boost speed-line surge indicator
-      if (this.drone.boosting) {
-        ctx.fillStyle = `rgba(0,180,255,${0.04 + 0.03 * Math.sin(Date.now() * 0.012)})`;
+      } else if (KEY.boost && bFuel < CFG.BOOST_WARN_AT) {
+        // warning zone — orange pulse + text
+        const pulse = 0.09 + 0.08 * Math.abs(Math.sin(t * 1.4));
+        ctx.fillStyle = `rgba(255,110,0,${pulse})`;
+        ctx.fillRect(0, 0, W, H);
+        const critPct = bFuel / CFG.BOOST_WARN_AT;
+        if (critPct < 0.5) {  // last 5 seconds — critical
+          ctx.fillStyle    = `rgba(255,160,0,${0.6 + 0.3 * Math.abs(Math.sin(t * 3))})`;
+          ctx.font         = `bold ${clamp(W * 0.048, 14, 22)}px 'Courier New'`;
+          ctx.textAlign    = 'center';
+          ctx.textBaseline = 'top';
+          ctx.shadowBlur   = 10;
+          ctx.shadowColor  = '#ff6600';
+          ctx.fillText('⚠ CRITICAL — RELEASE BOOST ⚠', W / 2, 44);
+          ctx.shadowBlur   = 0;
+        } else {
+          ctx.fillStyle    = `rgba(255,180,0,${0.5 + 0.3 * Math.abs(Math.sin(t * 2))})`;
+          ctx.font         = `bold ${clamp(W * 0.046, 14, 21)}px 'Courier New'`;
+          ctx.textAlign    = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillText('⚠ BOOST WARNING', W / 2, 44);
+        }
+      } else if (this.drone.boosting) {
+        // clean boost — subtle blue tint
+        ctx.fillStyle = `rgba(0,160,255,${0.04 + 0.025 * Math.sin(t * 1.2)})`;
         ctx.fillRect(0, 0, W, H);
       }
 
