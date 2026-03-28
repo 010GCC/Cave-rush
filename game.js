@@ -28,7 +28,8 @@ const CFG = {
   SLOW_DRAIN:       0.50,
   SLOW_REGEN:       0.16,
   SLOW_MAX:         100,
-  LEVEL_TIME:       90,      // seconds
+  LEVEL_DIST:       14000,   // px scrolled to complete a level
+  LEVEL_DIST_INC:   2500,    // extra px per level
   MIN_GAP_L1:       175,
   MAX_GAP:          310,
   GAP_STEP:         12,      // gap reduction per level
@@ -54,6 +55,15 @@ const CFG = {
   WEAPON_MS:        10000,
   ENEMY_BULLET_SPD: 3.6,
   WAVE_INTERVAL:    9000,    // ms between waves
+  SPEED_MULT:       1.32,    // speed power-up drone movement multiplier
+  SPEED_MS:         8000,
+  SCORE_MULT_MAX:   4.0,     // maximum score multiplier from rock drops
+  ROCK_CHANCE:      0.0030,  // per-frame individual rock spawn chance
+  ROCKWALL_CHANCE:  0.00042, // per-frame full rock-wall blockade chance
+  ROCK_AHEAD_MIN:   500,
+  ROCK_AHEAD_MAX:   1000,
+  CUT_TALLY_MS:     2800,    // level-complete tally phase duration
+  CUT_COUNT_MS:     750,     // ms per countdown digit (3, 2, 1, ENGAGE)
 };
 
 // ── Utility ──────────────────────────────────────────────────
@@ -306,6 +316,8 @@ class Drone {
     this.weapon      = 'default';  // 'default'|'spread'|'homing'|'explosive'
     this.weaponMs    = 0;
     this.fireTimer   = 0;
+    this.speedBoost  = false;
+    this.speedMs     = 0;
     this.tilt        = 0;
     this.thrustPh    = 0;
     this.W           = 30;   // half-width for collision
@@ -313,8 +325,13 @@ class Drone {
   }
 
   update(dt) {
+    if (this.speedMs > 0) {
+      this.speedMs -= dt;
+      if (this.speedMs <= 0) { this.speedBoost = false; this.speedMs = 0; }
+    }
+    const speedBoostMul = this.speedBoost ? CFG.SPEED_MULT : 1;
     const agilityMult = this.boosting ? CFG.BOOST_AGILITY : 1;
-    const spd = CFG.DRONE_SPD * agilityMult;
+    const spd = CFG.DRONE_SPD * agilityMult * speedBoostMul;
     const acc = 1.3 * agilityMult;
 
     if (KEY.left)  this.vx -= acc;
@@ -536,6 +553,8 @@ const PU_TYPES = {
   SPREAD:   { color:'#ffee00', label:'SPREAD',  desc:'10s',   weight: 2 },
   HOMING:   { color:'#ff44cc', label:'LOCK-ON', desc:'10s',   weight: 2 },
   EXPLOSIVE:{ color:'#ff6600', label:'BOMBS',   desc:'8s',    weight: 1 },
+  MULT:     { color:'#ff9900', label:'×MULT',   desc:'×2',   weight: 2 },
+  SPEED:    { color:'#00ff88', label:'SPEED+',  desc:'8s',   weight: 2 },
 };
 const PU_KEYS = Object.keys(PU_TYPES);
 // weighted random pick
@@ -751,6 +770,119 @@ class Stalactite {
 
     return drone.x > xMin && drone.x < xMax &&
            drone.y > yMin && drone.y < yMax;
+  }
+}
+
+// ── Cave Rock (destructible) ──────────────────────────────────
+class CaveRock {
+  constructor(caveProgress, cave, x, size, hp) {
+    this.cp      = caveProgress;
+    this.x       = x;
+    this.size    = size;
+    this.hp      = hp;
+    this.maxHp   = hp;
+    this.dead    = false;
+    this.flashMs = 0;
+    this.rot     = Math.random() * Math.PI * 2;
+    const n = 5 + Math.floor(Math.random() * 4);
+    this.pts = Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * Math.PI * 2 + rand(-0.32, 0.32);
+      const r = rand(0.58, 1.0);
+      return [Math.cos(a) * r, Math.sin(a) * r];
+    });
+  }
+
+  screenY(cave) { return DRONE_Y - (this.cp - cave.scroll); }
+
+  update(dt) { if (this.flashMs > 0) this.flashMs -= dt; }
+
+  draw(cave) {
+    const sy = this.screenY(cave);
+    if (sy < -this.size - 10 || sy > H + this.size + 10) return;
+
+    ctx.save();
+    ctx.translate(this.x, sy);
+    ctx.rotate(this.rot);
+
+    const flash  = this.flashMs > 0;
+    const hpPct  = this.hp / this.maxHp;
+
+    ctx.shadowBlur  = flash ? 16 : 5;
+    ctx.shadowColor = flash ? '#ff4422' : 'rgba(80,40,180,0.5)';
+    ctx.fillStyle   = flash ? '#7a2200' : (hpPct < 0.5 ? '#3a1a08' : '#252040');
+    ctx.strokeStyle = flash ? '#ff6633' : 'rgba(100,70,200,0.55)';
+    ctx.lineWidth   = 1.4;
+
+    ctx.beginPath();
+    this.pts.forEach(([px, py], i) => {
+      i === 0 ? ctx.moveTo(px * this.size, py * this.size)
+              : ctx.lineTo(px * this.size, py * this.size);
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // crack lines when damaged
+    if (hpPct < 1 && this.maxHp > 1) {
+      ctx.strokeStyle = 'rgba(200,80,30,0.45)';
+      ctx.lineWidth   = 0.8;
+      ctx.shadowBlur  = 0;
+      ctx.beginPath();
+      ctx.moveTo(-this.size * 0.25, -this.size * 0.15);
+      ctx.lineTo( this.size * 0.18,  this.size * 0.38);
+      ctx.stroke();
+    }
+
+    // HP bar for multi-HP rocks
+    if (this.maxHp > 1) {
+      const bw = this.size * 1.8;
+      ctx.shadowBlur = 0;
+      ctx.fillStyle  = '#1a0a00';
+      ctx.fillRect(-bw / 2, -this.size - 7, bw, 3);
+      ctx.fillStyle  = hpPct > 0.5 ? '#ff6622' : '#ff2200';
+      ctx.fillRect(-bw / 2, -this.size - 7, bw * hpPct, 3);
+    }
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  hit(dmg = 1) {
+    this.hp -= dmg;
+    this.flashMs = 110;
+    if (this.hp <= 0) { this.hp = 0; this.dead = true; }
+    return this.dead;
+  }
+
+  checkDroneCollide(drone, cave) {
+    if (drone.invincible || drone.shield) return false;
+    const sy = this.screenY(cave);
+    return Math.hypot(this.x - drone.x, sy - drone.y) < this.size * 0.82 + drone.W * 0.38;
+  }
+}
+
+// spawn a blockade of rocks spanning the cave width
+function spawnRockWall(caveProgress, cave, rocks) {
+  const segIdx = Math.floor(caveProgress / CFG.SEG_H);
+  const seg    = cave.segs[Math.min(segIdx, cave.segs.length - 1)]
+               || { left: W * 0.15, right: W * 0.85 };
+  const gapW   = seg.right - seg.left;
+  const sz     = clamp(gapW / 7.5, 12, 22);
+  const step   = sz * 1.95;
+  let cx = seg.left + sz;
+  while (cx < seg.right - sz * 0.5) {
+    const vary = rand(-CFG.SEG_H * 1.5, CFG.SEG_H * 1.5);
+    rocks.push(new CaveRock(caveProgress + vary, cave, cx, sz, 1));
+    cx += step;
+  }
+}
+
+// static noise overlay for cutscene
+function drawStaticEffect(alpha) {
+  const count = Math.floor(W * H * 0.035);
+  ctx.fillStyle = `rgba(200,220,255,${alpha})`;
+  for (let i = 0; i < count; i++) {
+    ctx.fillRect(Math.floor(Math.random() * W), Math.floor(Math.random() * H), 2, 1);
   }
 }
 
@@ -1270,8 +1402,9 @@ class PlayerBullet {
     ctx.restore();
   }
 
-  // returns score if hit, 0 if not
-  checkHit(enemies, parts, floatTexts) {
+  // returns score if hit, 0 if not; also handles rock hits
+  checkHit(enemies, parts, floatTexts, rocks = []) {
+    // check enemies
     for (const e of enemies) {
       if (e.dead) continue;
       const d = Math.hypot(e.x - this.x, e.y - this.y);
@@ -1286,9 +1419,28 @@ class PlayerBullet {
             parts.push(new Particle(e.x, e.y, e.type === 'scout' ? '#ff3300' : '#ff7700'));
           return pts;
         }
-        // hit but not killed — small flash burst
         for (let i = 0; i < 5; i++)
           parts.push(new Particle(this.x, this.y, '#ff8844', 0.6));
+        return 0;
+      }
+    }
+    // check rocks (uses screen-space Y stored on rock via _screenYCache)
+    for (const r of rocks) {
+      if (r.dead) continue;
+      const sy  = r._screenYCache !== undefined ? r._screenYCache : 9999;
+      const d   = Math.hypot(r.x - this.x, sy - this.y);
+      const hitR = this.type === 'explosive' ? 40 : this.r + r.size * 0.75;
+      if (d < hitR) {
+        const destroyed = r.hit(this.type === 'explosive' ? 3 : 1);
+        this.dead = true;
+        if (destroyed) {
+          for (let i = 0; i < 12; i++)
+            parts.push(new Particle(r.x, sy, i % 2 === 0 ? '#aa6622' : '#554422', 1.2));
+          floatTexts.push(new FloatText(r.x, sy - 8, '+ROCK', '#cc8833'));
+          return 'rock';   // signal rock destroyed to Game
+        }
+        for (let i = 0; i < 4; i++)
+          parts.push(new Particle(this.x, this.y, '#885522', 0.7));
         return 0;
       }
     }
@@ -1379,6 +1531,207 @@ function drawBoostBar(drone) {
   ctx.fillText(lbl, bx + bw / 2, by + bh + 4);
 }
 
+// ── Dashboard (right-side canvas panel) ──────────────────────
+function drawDashboard(game) {
+  const drone = game.drone;
+  const dw    = 120;
+  const dx    = W - dw;
+  const now   = Date.now();
+
+  // background panel
+  ctx.fillStyle = 'rgba(0,6,18,0.88)';
+  ctx.fillRect(dx, 0, dw, H);
+
+  // left border glow
+  ctx.strokeStyle = 'rgba(0,200,255,0.55)';
+  ctx.lineWidth   = 1.5;
+  ctx.beginPath(); ctx.moveTo(dx, 0); ctx.lineTo(dx, H); ctx.stroke();
+
+  // inner panel border
+  ctx.strokeStyle = 'rgba(0,200,255,0.15)';
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(dx + 2, 2, dw - 4, H - 4);
+
+  const cx = dx + dw / 2;
+  let oy   = 12;
+  const lbl = (txt, y) => {
+    ctx.fillStyle    = 'rgba(0,140,190,0.7)';
+    ctx.font         = '7px Courier New';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(txt, cx, y);
+  };
+  const sep = (y) => {
+    ctx.strokeStyle = 'rgba(0,200,255,0.18)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath(); ctx.moveTo(dx + 10, y); ctx.lineTo(dx + dw - 10, y); ctx.stroke();
+  };
+
+  // ◈ header
+  ctx.fillStyle    = 'rgba(0,160,210,0.55)';
+  ctx.font         = '7px Courier New';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('◈ SYSTEMS ◈', cx, oy);
+  oy += 13; sep(oy); oy += 7;
+
+  // LEVEL (large, glowing)
+  lbl('LEVEL', oy); oy += 10;
+  const lvlPulse = 0.7 + 0.3 * Math.sin(now * 0.002);
+  ctx.shadowBlur  = 10 * lvlPulse;
+  ctx.shadowColor = '#00ffff';
+  ctx.fillStyle   = `rgba(0,255,255,${lvlPulse})`;
+  ctx.font        = `bold 30px 'Courier New'`;
+  ctx.textAlign   = 'center';
+  ctx.textBaseline= 'top';
+  ctx.fillText(game.level, cx, oy);
+  ctx.shadowBlur  = 0;
+  oy += 34; sep(oy); oy += 7;
+
+  // SCORE
+  lbl('SCORE', oy); oy += 10;
+  ctx.fillStyle    = '#00ffcc';
+  ctx.font         = `bold ${game.score >= 1e6 ? '10' : game.score >= 100000 ? '11' : '13'}px 'Courier New'`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(game.score.toLocaleString(), cx, oy);
+  oy += 17;
+
+  // MULTIPLIER
+  lbl('MULT', oy); oy += 10;
+  const mult      = game.scoreMultiplier || 1;
+  const multColor = mult >= 4 ? '#ff4400' : mult >= 2 ? '#ff9900' : '#444455';
+  if (mult > 1) { ctx.shadowBlur = 8; ctx.shadowColor = multColor; }
+  ctx.fillStyle    = mult > 1 ? multColor : 'rgba(60,70,90,0.9)';
+  ctx.font         = `bold 15px 'Courier New'`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`\u00d7${mult.toFixed(1)}`, cx, oy);
+  ctx.shadowBlur   = 0;
+  oy += 20; sep(oy); oy += 7;
+
+  // HULL (lives)
+  lbl('HULL', oy); oy += 10;
+  const lives  = drone ? drone.lives : 0;
+  const pipW   = 10, pipGap = 3;
+  const totPW  = CFG.MAX_LIVES * (pipW + pipGap) - pipGap;
+  let   pipX   = cx - totPW / 2;
+  for (let i = 0; i < CFG.MAX_LIVES; i++) {
+    ctx.fillStyle  = i < lives ? '#ff3355' : '#221122';
+    ctx.shadowBlur = i < lives ? 4 : 0;
+    ctx.shadowColor= '#ff3355';
+    ctx.beginPath();
+    ctx.moveTo(pipX + pipW / 2, oy);
+    ctx.lineTo(pipX + pipW,     oy + 4);
+    ctx.lineTo(pipX + pipW / 2, oy + 8);
+    ctx.lineTo(pipX,            oy + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    pipX += pipW + pipGap;
+  }
+  oy += 16; sep(oy); oy += 7;
+
+  // STATUS
+  lbl('STATUS', oy); oy += 10;
+  let anyStatus = false;
+
+  const statusBar = (label, color, pct) => {
+    anyStatus = true;
+    ctx.fillStyle    = color;
+    ctx.font         = '8px Courier New';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(label, cx, oy);
+    oy += 11;
+    const bw = dw - 22, bx2 = dx + 11;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(bx2, oy, bw, 4);
+    ctx.fillStyle = color + 'bb';
+    ctx.fillRect(bx2, oy, bw * Math.max(0, Math.min(1, pct)), 4);
+    oy += 9;
+  };
+
+  if (drone) {
+    if (drone.weapon !== 'default') {
+      const wc = { spread:'#ffee00', homing:'#ff44cc', explosive:'#ff6600' }[drone.weapon] || '#fff';
+      statusBar(`◆ ${drone.weapon.toUpperCase()}`, wc, drone.weaponMs / CFG.WEAPON_MS);
+    }
+    if (drone.shield)     statusBar('◆ SHIELD',  '#44aaff', drone.shieldMs  / CFG.SHIELD_MS);
+    if (drone.speedBoost) statusBar('◆ SPEED+',  '#00ff88', drone.speedMs   / CFG.SPEED_MS);
+    if (drone.magnet)     statusBar('◆ MAGNET',  '#cc44ff', drone.magnetMs  / CFG.MAGNET_MS);
+  }
+  if (!anyStatus) {
+    ctx.fillStyle    = 'rgba(50,70,90,0.8)';
+    ctx.font         = '8px Courier New';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('NOMINAL', cx, oy);
+    oy += 12;
+  }
+
+  sep(oy); oy += 7;
+
+  // SLOW and BOOST horizontal bars
+  const barW = dw - 22, barX = dx + 11, barH2 = 9;
+
+  lbl('SLOW', oy); oy += 9;
+  const sFuelPct = game.sFuel / CFG.SLOW_MAX;
+  ctx.fillStyle = '#001018'; ctx.fillRect(barX, oy, barW, barH2);
+  if (sFuelPct > 0) {
+    const gs = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    gs.addColorStop(0, sFuelPct > 0.3 ? '#0044cc' : '#aa2200');
+    gs.addColorStop(1, sFuelPct > 0.3 ? '#00bbff' : '#ff6600');
+    ctx.fillStyle = gs; ctx.fillRect(barX, oy, barW * sFuelPct, barH2);
+  }
+  ctx.strokeStyle = '#002233'; ctx.lineWidth = 1; ctx.strokeRect(barX, oy, barW, barH2);
+  oy += barH2 + 9;
+
+  const boostPct = drone ? drone.boostFuel / CFG.BOOST_FUEL_MAX : 0;
+  const bFail    = drone && drone.boostFailing;
+  const bWarn    = drone && !bFail && drone.boostFuel < CFG.BOOST_WARN_AT;
+  lbl(bFail ? 'BOOST FAIL' : 'BOOST', oy);
+  if (bFail || bWarn) { ctx.fillStyle = bFail ? '#ff3300' : '#ff8800'; ctx.font = '7px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(bFail ? 'BOOST FAIL' : 'BOOST', cx, oy); }
+  oy += 9;
+  ctx.fillStyle = '#001008'; ctx.fillRect(barX, oy, barW, barH2);
+  if (boostPct > 0) {
+    const t2 = now * 0.009;
+    const pulse2 = bWarn ? 0.65 + 0.35 * Math.abs(Math.sin(t2 * 1.6)) : 1;
+    const gb = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    if (bFail) {
+      gb.addColorStop(0, `rgba(120,0,0,${pulse2})`); gb.addColorStop(1, `rgba(255,30,0,${pulse2})`);
+    } else if (bWarn) {
+      gb.addColorStop(0, `rgba(180,60,0,${pulse2})`); gb.addColorStop(1, `rgba(255,140,0,${pulse2})`);
+    } else {
+      gb.addColorStop(0, '#0055cc'); gb.addColorStop(1, '#44eeff');
+    }
+    ctx.fillStyle = gb; ctx.fillRect(barX, oy, barW * boostPct, barH2);
+  }
+  const warnTick = barX + barW * (CFG.BOOST_WARN_AT / CFG.BOOST_FUEL_MAX);
+  ctx.strokeStyle = 'rgba(255,120,0,0.4)'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(warnTick, oy); ctx.lineTo(warnTick, oy + barH2); ctx.stroke();
+  ctx.strokeStyle = bFail ? '#440000' : '#002310'; ctx.lineWidth = 1; ctx.strokeRect(barX, oy, barW, barH2);
+  oy += barH2 + 9;
+
+  sep(oy); oy += 7;
+
+  // DEPTH progress bar
+  const depthPct = Math.min(1, (game.distanceDone || 0) / (game.levelDist || 1));
+  lbl(`DEPTH  ${Math.round(depthPct * 100)}%`, oy); oy += 9;
+  ctx.fillStyle = '#001018'; ctx.fillRect(barX, oy, barW, barH2);
+  if (depthPct > 0) {
+    const gd = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    gd.addColorStop(0, '#004422'); gd.addColorStop(1, '#00ff66');
+    ctx.fillStyle = gd; ctx.fillRect(barX, oy, barW * depthPct, barH2);
+  }
+  ctx.strokeStyle = '#002233'; ctx.lineWidth = 1; ctx.strokeRect(barX, oy, barW, barH2);
+
+  // reset
+  ctx.textAlign    = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.shadowBlur   = 0;
+}
+
 // ── Screen-Shake ──────────────────────────────────────────────
 let shakeMs = 0, shakeMag = 0;
 function triggerShake(mag = 6, ms = 300) { shakeMs = ms; shakeMag = mag; }
@@ -1432,17 +1785,25 @@ class Game {
     this.frame  = 0;
     this.lastTs = 0;
 
-    this.cave         = null;
-    this.drone        = null;
-    this.pups         = [];
-    this.crystals     = [];
-    this.stalas       = [];
-    this.enemies      = [];
-    this.playerBullets= [];
-    this.enemyBullets = [];
-    this.parts        = [];
-    this.ftexts       = [];
-    this.waveTimer    = 0;
+    this.cave          = null;
+    this.drone         = null;
+    this.pups          = [];
+    this.crystals      = [];
+    this.stalas        = [];
+    this.rocks         = [];
+    this.enemies       = [];
+    this.playerBullets = [];
+    this.enemyBullets  = [];
+    this.parts         = [];
+    this.ftexts        = [];
+    this.waveTimer     = 0;
+    this.scoreMultiplier = 1;
+    this.distanceDone    = 0;
+    this.levelDist       = CFG.LEVEL_DIST;
+    this.cutPhase        = '';
+    this.cutTimer        = 0;
+    this.cutBonus        = 0;
+    this.cutTallyAmt     = 0;
     this.dpad         = new DPad();
     this.slines       = new SpeedLines();
 
@@ -1506,25 +1867,27 @@ class Game {
   }
 
   _startLevel() {
-    this.cave         = new Cave(this.level);
-    this.drone        = new Drone();
-    this.pups         = [];
-    this.crystals     = [];
-    this.stalas       = [];
-    this.enemies      = [];
-    this.playerBullets= [];
-    this.enemyBullets = [];
-    this.parts        = [];
-    this.ftexts       = [];
-    this.waveTimer    = CFG.WAVE_INTERVAL * 0.45;  // first wave comes faster
-    this.tLeft  = CFG.LEVEL_TIME;
-    this.sFuel  = CFG.SLOW_MAX;
-    this.scroll = CFG.BASE_SCROLL * Math.pow(1 + CFG.LVL_INC, this.level - 1);
-    this.state  = 'playing';
-    shakeMs     = 0;
+    this.cave          = new Cave(this.level);
+    this.drone         = new Drone();
+    this.pups          = [];
+    this.crystals      = [];
+    this.stalas        = [];
+    this.rocks         = [];
+    this.enemies       = [];
+    this.playerBullets = [];
+    this.enemyBullets  = [];
+    this.parts         = [];
+    this.ftexts        = [];
+    this.waveTimer     = CFG.WAVE_INTERVAL * 0.45;
+    this.sFuel         = CFG.SLOW_MAX;
+    this.scroll        = CFG.BASE_SCROLL * Math.pow(1 + CFG.LVL_INC, this.level - 1);
+    this.scoreMultiplier = 1;
+    this.distanceDone  = 0;
+    this.levelDist     = CFG.LEVEL_DIST + (this.level - 1) * CFG.LEVEL_DIST_INC;
+    this.state         = 'playing';
+    shakeMs            = 0;
     hideScreen();
-    document.getElementById('hud').classList.remove('hidden');
-    updateHUD(this.score, this.level, this.tLeft, this.drone.lives);
+    document.getElementById('hud').classList.add('hidden');
   }
 
   // ── Game Loop ───────────────────────────────────────────────
@@ -1534,17 +1897,13 @@ class Game {
     this.lastTs = ts;
     this.frame++;
 
-    if (this.state === 'playing') this._update(dt);
+    if (this.state === 'playing')  this._update(dt);
+    if (this.state === 'levelcut') this._updateCut(dt);
     this._draw(dt);
   }
 
   // ── Update ──────────────────────────────────────────────────
   _update(dt) {
-    const dtS = dt / 1000;
-
-    // countdown
-    this.tLeft -= dtS;
-    if (this.tLeft <= 0) { this.tLeft = 0; this._levelDone(); return; }
 
     // slow fuel
     const slowOn = KEY.slow && this.sFuel > 0;
@@ -1556,14 +1915,18 @@ class Game {
     else if (this.drone.boosting) boostMult = CFG.BOOST_MULT;
     const effScroll = this.scroll * boostMult * (slowOn ? CFG.SLOW_MULT : 1);
 
+    // distance-based level completion
+    this.distanceDone += effScroll;
+    if (this.distanceDone >= this.levelDist) { this._levelDone(); return; }
+
     // cave advance
     this.cave.update(effScroll);
 
     // drone
     this.drone.update(dt);
 
-    // passive score
-    this.score += slowOn ? 1 : 2;
+    // passive score (multiplied)
+    this.score += Math.round((slowOn ? 1 : 2) * this.scoreMultiplier);
 
     // spawn power-ups
     if (Math.random() < CFG.PU_CHANCE * (effScroll / CFG.BASE_SCROLL)) {
@@ -1587,6 +1950,41 @@ class Game {
       }
     }
 
+    // spawn individual rocks
+    const rockSpawnMult = effScroll / CFG.BASE_SCROLL;
+    if (Math.random() < CFG.ROCK_CHANCE * rockSpawnMult) {
+      const ahead  = this.cave.scroll + DRONE_Y + rand(CFG.ROCK_AHEAD_MIN, CFG.ROCK_AHEAD_MAX);
+      const segIdx = Math.floor(ahead / CFG.SEG_H);
+      const seg    = this.cave.segs[Math.min(segIdx, this.cave.segs.length - 1)]
+                   || { left: W * 0.15, right: W * 0.85 };
+      const gapW   = seg.right - seg.left;
+      if (gapW > 80) {
+        const x  = rand(seg.left + 20, seg.right - 20);
+        const sz = rand(12, Math.min(24, gapW * 0.14));
+        const hp = Math.random() < 0.35 ? 2 : 1;
+        this.rocks.push(new CaveRock(ahead, this.cave, x, sz, hp));
+      }
+    }
+    // spawn rock wall blockades
+    if (Math.random() < CFG.ROCKWALL_CHANCE * rockSpawnMult) {
+      const ahead = this.cave.scroll + DRONE_Y + rand(CFG.ROCK_AHEAD_MIN, CFG.ROCK_AHEAD_MAX);
+      spawnRockWall(ahead, this.cave, this.rocks);
+    }
+
+    // rock update, cache screen Y, collision with drone
+    for (const r of this.rocks) {
+      r.update(dt);
+      r._screenYCache = r.screenY(this.cave);
+      if (!r.dead && r.checkDroneCollide(this.drone, this.cave)) {
+        triggerShake(6, 280);
+        this._burst(this.drone.x, this.drone.y, '#aa6622', 12);
+        r.dead = true;
+        const dead = this.drone.hit();
+        if (dead) { this._gameOver(); return; }
+      }
+    }
+    this.rocks = this.rocks.filter(r => !r.dead && r._screenYCache > -80);
+
     // power-up update + collect
     for (const p of this.pups) {
       p.update();
@@ -1603,9 +2001,10 @@ class Game {
       c.update();
       if (!c.collected && c.checkCollect(this.drone, this.cave, magnetOn)) {
         c.collected = true;
-        this.score += 50;
+        const cPts = Math.round(50 * this.scoreMultiplier);
+        this.score += cPts;
         this._burst(c.x, c.screenY(this.cave), c.color, 6);
-        this.ftexts.push(new FloatText(c.x, c.screenY(this.cave) - 8, '+50', c.color));
+        this.ftexts.push(new FloatText(c.x, c.screenY(this.cave) - 8, `+${cPts}`, c.color));
       }
     }
     this.crystals = this.crystals.filter(c => !c.collected && c.screenY(this.cave) > -60);
@@ -1664,12 +2063,17 @@ class Game {
       e.update(dt, this.cave, this.drone, this.enemyBullets);
     this.enemies = this.enemies.filter(e => !e.dead);
 
-    // ── UPDATE PLAYER BULLETS + HIT ENEMIES ──────────────────
+    // ── UPDATE PLAYER BULLETS + HIT ENEMIES + HIT ROCKS ─────
     for (const b of this.playerBullets) {
       b.update(this.enemies);
       if (!b.dead) {
-        const pts = b.checkHit(this.enemies, this.parts, this.ftexts);
-        if (pts) this.score += pts;
+        const result = b.checkHit(this.enemies, this.parts, this.ftexts, this.rocks);
+        if (result === 'rock') {
+          // find the destroyed rock and drop a power-up
+          this._rockDropLoot(b.x, b.y);
+        } else if (result) {
+          this.score += Math.round(result * this.scoreMultiplier);
+        }
       }
     }
     this.playerBullets = this.playerBullets.filter(b => !b.dead);
@@ -1719,9 +2123,7 @@ class Game {
     this.parts  = this.parts.filter(p => !p.dead);
     this.ftexts = this.ftexts.filter(f => !f.dead);
 
-    // HUD every 4 frames
-    if (this.frame % 4 === 0)
-      updateHUD(this.score, this.level, this.tLeft, this.drone.lives);
+    // (dashboard is drawn on canvas — no HTML HUD update needed)
   }
 
   // ── Collect Power-Up ────────────────────────────────────────
@@ -1740,7 +2142,6 @@ class Game {
         break;
       case 'LIFE':
         if (this.drone.lives < CFG.MAX_LIVES) this.drone.lives++;
-        updateHUD(this.score, this.level, this.tLeft, this.drone.lives);
         break;
       case 'SHIELD':
         this.drone.shield   = true;
@@ -1762,33 +2163,176 @@ class Game {
         this.drone.weapon   = 'explosive';
         this.drone.weaponMs = CFG.WEAPON_MS;
         break;
+      case 'MULT':
+        this.scoreMultiplier = Math.min(CFG.SCORE_MULT_MAX, this.scoreMultiplier * 2);
+        this.ftexts.push(new FloatText(pu.x, sy - 28, `×${this.scoreMultiplier.toFixed(0)}`, '#ff9900'));
+        break;
+      case 'SPEED':
+        this.drone.speedBoost = true;
+        this.drone.speedMs    = CFG.SPEED_MS;
+        break;
     }
+  }
+
+  // randomly drop loot from a destroyed rock
+  _rockDropLoot(x, y) {
+    if (Math.random() > 0.32) return;   // 32% drop chance
+    const roll = Math.random();
+    let type;
+    if      (roll < 0.28) type = 'MULT';
+    else if (roll < 0.48) type = 'SHIELD';
+    else if (roll < 0.66) type = 'SPEED';
+    else if (roll < 0.80) type = 'POINTS';
+    else {
+      // random weapon
+      const w = ['SPREAD','HOMING','EXPLOSIVE'];
+      type = w[Math.floor(Math.random() * w.length)];
+    }
+    // create a fake PowerUp at this screen position (convert to cave coords)
+    const cp = this.cave.scroll + (DRONE_Y - y);
+    const pu = new PowerUp(cp, this.cave);
+    pu.type  = type;
+    pu.cfg   = PU_TYPES[type];
+    pu.x     = clamp(x + rand(-20, 20), 30, W - 145);
+    this.pups.push(pu);
   }
 
   _burst(x, y, color, n) {
     for (let i = 0; i < n; i++) this.parts.push(new Particle(x, y, color));
   }
 
-  // ── Level Done ──────────────────────────────────────────────
+  // ── Level Done — starts canvas cutscene ─────────────────────
   _levelDone() {
-    this.state = 'levelcomplete';
-    const bonus = Math.floor(this.tLeft * 12 * this.level);
-    this.score += bonus;
+    this.state       = 'levelcut';
+    this.cutPhase    = 'tally';
+    this.cutTimer    = 0;
+    this.cutBonus    = Math.floor(this.level * 800 * this.scoreMultiplier);
+    this.cutTallyAmt = 0;
     document.getElementById('hud').classList.add('hidden');
-    showScreen(`
-      <div class="title" style="color:#00ff88;text-shadow:0 0 20px #00ff88;font-size:clamp(28px,9vw,44px)">
-        LEVEL ${this.level}
-      </div>
-      <div class="subtitle">COMPLETE</div>
-      <div class="score-display">TIME BONUS<br><span style="color:#ffdd00">+${bonus}</span></div>
-      <div class="score-display" style="font-size:clamp(16px,5vw,22px);color:#aaf">SCORE: ${this.score}</div>
-      <button class="btn" id="bNext">NEXT LEVEL ▶</button>
-    `);
-    document.getElementById('bNext').onclick = () => {
-      this.level++;
-      document.getElementById('hud').classList.remove('hidden');
-      this._startLevel();
-    };
+  }
+
+  _updateCut(dt) {
+    this.cutTimer += dt;
+    const autopilotSpd = CFG.BASE_SCROLL * 0.55;
+    this.cave.update(autopilotSpd);
+
+    // autopilot drone
+    if (this.drone) {
+      const aimX = (W - 120) / 2;
+      this.drone.x      = lerp(this.drone.x, aimX, 0.04);
+      this.drone.y      = lerp(this.drone.y, DRONE_Y, 0.06);
+      this.drone.vx    *= 0.82;
+      this.drone.vy    *= 0.82;
+      this.drone.tilt   = lerp(this.drone.tilt, 0, 0.12);
+      this.drone.thrustPh += 0.28;
+    }
+
+    if (this.cutPhase === 'tally') {
+      const progress = Math.min(1, this.cutTimer / CFG.CUT_TALLY_MS);
+      this.cutTallyAmt = Math.floor(this.cutBonus * progress);
+      if (this.cutTimer >= CFG.CUT_TALLY_MS) {
+        this.score += this.cutBonus;
+        this.cutPhase = 'count';
+        this.cutTimer = 0;
+      }
+    } else if (this.cutPhase === 'count') {
+      const idx = Math.floor(this.cutTimer / CFG.CUT_COUNT_MS);
+      if (idx >= 4) {
+        this.level++;
+        this._startLevel();
+      }
+    }
+  }
+
+  _drawCut() {
+    const caveW = W - 120;
+    const cx    = caveW / 2;
+    const t     = Date.now();
+
+    if (this.cutPhase === 'tally') {
+      const alpha = Math.min(1, this.cutTimer / 420);
+      ctx.fillStyle = `rgba(0,0,20,${0.52 * alpha})`;
+      ctx.fillRect(0, 0, caveW, H);
+
+      const glow = 0.75 + 0.25 * Math.sin(t * 0.0028);
+      ctx.save();
+      ctx.shadowBlur  = 22 * glow;
+      ctx.shadowColor = '#00ff88';
+      ctx.fillStyle   = `rgba(0,255,136,${alpha * glow})`;
+      ctx.font        = `bold ${clamp(W * 0.07, 22, 40)}px 'Courier New'`;
+      ctx.textAlign   = 'center';
+      ctx.textBaseline= 'middle';
+      ctx.fillText(`LEVEL ${this.level}`, cx, H * 0.30);
+      ctx.shadowBlur  = 12;
+      ctx.shadowColor = '#88ff44';
+      ctx.fillStyle   = `rgba(160,255,80,${alpha})`;
+      ctx.font        = `bold ${clamp(W * 0.048, 16, 26)}px 'Courier New'`;
+      ctx.fillText('COMPLETE', cx, H * 0.40);
+      ctx.restore();
+
+      const prog = Math.min(1, this.cutTimer / CFG.CUT_TALLY_MS);
+      if (prog > 0.12) {
+        const fa = alpha * Math.min(1, (prog - 0.12) / 0.18);
+        ctx.fillStyle = `rgba(255,221,0,${fa * 0.7})`;
+        ctx.font      = `${clamp(W * 0.036, 11, 18)}px 'Courier New'`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('DEPTH BONUS', cx, H * 0.52);
+        ctx.fillStyle = `rgba(255,221,0,${fa})`;
+        ctx.font      = `bold ${clamp(W * 0.055, 18, 30)}px 'Courier New'`;
+        ctx.fillText(`+${this.cutTallyAmt.toLocaleString()}`, cx, H * 0.61);
+      }
+      if (this.scoreMultiplier > 1 && prog > 0.5) {
+        ctx.fillStyle = `rgba(255,153,0,${alpha * Math.min(1,(prog-0.5)/0.2)})`;
+        ctx.font      = `${clamp(W * 0.036, 11, 17)}px 'Courier New'`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`MULTIPLIER ×${this.scoreMultiplier.toFixed(1)} APPLIED`, cx, H * 0.71);
+      }
+      // score total
+      if (prog > 0.7) {
+        const fa2 = alpha * Math.min(1, (prog - 0.7) / 0.2);
+        ctx.fillStyle = `rgba(100,200,255,${fa2})`;
+        ctx.font      = `${clamp(W * 0.032, 10, 16)}px 'Courier New'`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`SCORE  ${this.score.toLocaleString()}`, cx, H * 0.80);
+      }
+
+    } else if (this.cutPhase === 'count') {
+      const idx    = Math.floor(this.cutTimer / CFG.CUT_COUNT_MS);
+      const phaseT = this.cutTimer % CFG.CUT_COUNT_MS;
+
+      // flash on new digit
+      if (phaseT < 110) {
+        const fa = 0.65 * (1 - phaseT / 110);
+        ctx.fillStyle = `rgba(255,255,255,${fa})`;
+        ctx.fillRect(0, 0, caveW, H);
+      }
+
+      // static noise
+      const sAlpha = Math.max(0, 0.30 * (1 - phaseT / (CFG.CUT_COUNT_MS * 0.65)));
+      if (sAlpha > 0.01) drawStaticEffect(sAlpha);
+
+      const labels = ['3', '2', '1', 'ENGAGE!'];
+      const colors = ['#ff3333', '#ffaa00', '#ffff00', '#00ffcc'];
+      if (idx < 4) {
+        const label = labels[idx];
+        const color = colors[idx];
+        const pulse = 0.85 + 0.15 * Math.sin(phaseT * 0.022);
+        ctx.save();
+        ctx.shadowBlur  = 35 * pulse;
+        ctx.shadowColor = color;
+        ctx.fillStyle   = color;
+        ctx.textAlign   = 'center';
+        ctx.textBaseline= 'middle';
+        ctx.font = idx < 3
+          ? `bold ${clamp(caveW * 0.36, 64, 130)}px 'Courier New'`
+          : `bold ${clamp(caveW * 0.17, 32, 64)}px 'Courier New'`;
+        ctx.fillText(label, cx, H / 2);
+        ctx.restore();
+      }
+    }
   }
 
   // ── Game Over ───────────────────────────────────────────────
@@ -1823,12 +2367,15 @@ class Game {
 
     if (this.cave) this.cave.draw();
 
-    if (this.state === 'playing') {
+    if (this.state === 'playing' || this.state === 'levelcut') {
       const slowOn = KEY.slow && this.sFuel > 0;
       this.slines.draw(this.scroll * (slowOn ? CFG.SLOW_MULT : 1));
 
-      // stalactites (cave hazards — drawn over walls, under drone)
+      // stalactites
       for (const s of this.stalas) s.draw(this.cave);
+
+      // cave rocks
+      for (const r of this.rocks) r.draw(this.cave);
 
       // particles (under drone)
       for (const p of this.parts)  p.draw();
@@ -1839,7 +2386,7 @@ class Game {
       // power-ups
       for (const p of this.pups)   p.draw(this.cave);
 
-      // enemy bullets (under enemies)
+      // enemy bullets
       for (const b of this.enemyBullets) b.draw();
 
       // enemies
@@ -1854,59 +2401,54 @@ class Game {
       // float texts
       for (const f of this.ftexts) f.draw();
 
-      // D-pad
-      this.dpad.draw();
+      // D-pad (only during play)
+      if (this.state === 'playing') this.dpad.draw();
 
-      // fuel bar + boost bar
-      drawFuelBar(this.sFuel);
-      drawBoostBar(this.drone);
+      // cutscene overlay
+      if (this.state === 'levelcut') this._drawCut();
 
-      // boost overlays
-      const t   = Date.now() * 0.009;
-      const bFuel = this.drone.boostFuel;
-      if (this.drone.boostFailing) {
-        // engine failure — heavy red pulse + warning text
-        const pulse = 0.14 + 0.12 * Math.abs(Math.sin(t * 1.8));
-        ctx.fillStyle = `rgba(255,30,0,${pulse})`;
-        ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle    = `rgba(255,80,0,${0.7 + 0.3 * Math.abs(Math.sin(t * 2))})`;
-        ctx.font         = `bold ${clamp(W * 0.052, 15, 24)}px 'Courier New'`;
-        ctx.textAlign    = 'center';
-        ctx.textBaseline = 'top';
-        ctx.shadowBlur   = 14;
-        ctx.shadowColor  = '#ff2200';
-        ctx.fillText('★ ENGINE FAILURE — RELEASE BOOST ★', W / 2, 44);
-        ctx.shadowBlur   = 0;
-      } else if (KEY.boost && bFuel < CFG.BOOST_WARN_AT) {
-        // warning zone — orange pulse + text
-        const pulse = 0.09 + 0.08 * Math.abs(Math.sin(t * 1.4));
-        ctx.fillStyle = `rgba(255,110,0,${pulse})`;
-        ctx.fillRect(0, 0, W, H);
-        const critPct = bFuel / CFG.BOOST_WARN_AT;
-        if (critPct < 0.5) {  // last 5 seconds — critical
-          ctx.fillStyle    = `rgba(255,160,0,${0.6 + 0.3 * Math.abs(Math.sin(t * 3))})`;
-          ctx.font         = `bold ${clamp(W * 0.048, 14, 22)}px 'Courier New'`;
+      // boost overlays + vignette (playing only)
+      if (this.state === 'playing') {
+        const t2    = Date.now() * 0.009;
+        const bFuel = this.drone.boostFuel;
+        if (this.drone.boostFailing) {
+          const pulse = 0.14 + 0.12 * Math.abs(Math.sin(t2 * 1.8));
+          ctx.fillStyle = `rgba(255,30,0,${pulse})`;
+          ctx.fillRect(0, 0, W, H);
+          ctx.fillStyle    = `rgba(255,80,0,${0.7 + 0.3 * Math.abs(Math.sin(t2 * 2))})`;
+          ctx.font         = `bold ${clamp(W * 0.052, 15, 24)}px 'Courier New'`;
           ctx.textAlign    = 'center';
           ctx.textBaseline = 'top';
-          ctx.shadowBlur   = 10;
-          ctx.shadowColor  = '#ff6600';
-          ctx.fillText('⚠ CRITICAL — RELEASE BOOST ⚠', W / 2, 44);
+          ctx.shadowBlur   = 14; ctx.shadowColor = '#ff2200';
+          ctx.fillText('★ ENGINE FAILURE — RELEASE BOOST ★', W / 2, 44);
           ctx.shadowBlur   = 0;
-        } else {
-          ctx.fillStyle    = `rgba(255,180,0,${0.5 + 0.3 * Math.abs(Math.sin(t * 2))})`;
-          ctx.font         = `bold ${clamp(W * 0.046, 14, 21)}px 'Courier New'`;
-          ctx.textAlign    = 'center';
-          ctx.textBaseline = 'top';
-          ctx.fillText('⚠ BOOST WARNING', W / 2, 44);
+        } else if (KEY.boost && bFuel < CFG.BOOST_WARN_AT) {
+          const pulse = 0.09 + 0.08 * Math.abs(Math.sin(t2 * 1.4));
+          ctx.fillStyle = `rgba(255,110,0,${pulse})`;
+          ctx.fillRect(0, 0, W, H);
+          const critPct = bFuel / CFG.BOOST_WARN_AT;
+          if (critPct < 0.5) {
+            ctx.fillStyle    = `rgba(255,160,0,${0.6 + 0.3 * Math.abs(Math.sin(t2 * 3))})`;
+            ctx.font         = `bold ${clamp(W * 0.048, 14, 22)}px 'Courier New'`;
+            ctx.textAlign    = 'center'; ctx.textBaseline = 'top';
+            ctx.shadowBlur   = 10; ctx.shadowColor = '#ff6600';
+            ctx.fillText('⚠ CRITICAL — RELEASE BOOST ⚠', W / 2, 44);
+            ctx.shadowBlur   = 0;
+          } else {
+            ctx.fillStyle    = `rgba(255,180,0,${0.5 + 0.3 * Math.abs(Math.sin(t2 * 2))})`;
+            ctx.font         = `bold ${clamp(W * 0.046, 14, 21)}px 'Courier New'`;
+            ctx.textAlign    = 'center'; ctx.textBaseline = 'top';
+            ctx.fillText('⚠ BOOST WARNING', W / 2, 44);
+          }
+        } else if (this.drone.boosting) {
+          ctx.fillStyle = `rgba(0,160,255,${0.04 + 0.025 * Math.sin(t2 * 1.2)})`;
+          ctx.fillRect(0, 0, W, H);
         }
-      } else if (this.drone.boosting) {
-        // clean boost — subtle blue tint
-        ctx.fillStyle = `rgba(0,160,255,${0.04 + 0.025 * Math.sin(t * 1.2)})`;
-        ctx.fillRect(0, 0, W, H);
+        this._vignette();
       }
 
-      // near-wall danger vignette
-      this._vignette();
+      // right-side dashboard (playing + levelcut)
+      drawDashboard(this);
     }
 
     ctx.restore();
