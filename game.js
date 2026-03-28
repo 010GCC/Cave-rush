@@ -114,10 +114,12 @@ class Cave {
     this.spawnHints   = [];
     this._prevCVSign  = 0;
     this._straightCnt = 0;
+    this._liveGen     = false; // suppress hints during initial pre-generation
 
     // pre-generate enough for first frame
     const need = Math.ceil((DRONE_Y + 60) / CFG.SEG_H) + 50;
     for (let i = 0; i < need; i++) this._gen();
+    this._liveGen = true; // hints enabled from here on
   }
 
   _gen() {
@@ -137,20 +139,22 @@ class Cave {
     this.segs.push(seg);
 
     // detect curve apexes (velocity sign flip) and straight runs for ring spawning
-    const cvSign = this.gCV > 0.4 ? 1 : this.gCV < -0.4 ? -1 : 0;
-    if (cvSign !== 0 && this._prevCVSign !== 0 && cvSign !== this._prevCVSign) {
-      this.spawnHints.push({ cp: this.segs.length * CFG.SEG_H, type: 'apex', cx: this.gC, gap: this.gG });
-    }
-    if (cvSign !== 0) this._prevCVSign = cvSign;
+    if (this._liveGen) {
+      const cvSign = this.gCV > 0.4 ? 1 : this.gCV < -0.4 ? -1 : 0;
+      if (cvSign !== 0 && this._prevCVSign !== 0 && cvSign !== this._prevCVSign) {
+        this.spawnHints.push({ cp: this.segs.length * CFG.SEG_H, type: 'apex', cx: this.gC, gap: this.gG });
+      }
+      if (cvSign !== 0) this._prevCVSign = cvSign;
 
-    if (Math.abs(this.gCV) < 0.9) {
-      this._straightCnt++;
-      if (this._straightCnt === 30) {
-        this.spawnHints.push({ cp: this.segs.length * CFG.SEG_H, type: 'straight', cx: this.gC, gap: this.gG });
+      if (Math.abs(this.gCV) < 0.9) {
+        this._straightCnt++;
+        if (this._straightCnt === 30) {
+          this.spawnHints.push({ cp: this.segs.length * CFG.SEG_H, type: 'straight', cx: this.gC, gap: this.gG });
+          this._straightCnt = 0;
+        }
+      } else {
         this._straightCnt = 0;
       }
-    } else {
-      this._straightCnt = 0;
     }
 
     // 12% chance to add a wall decoration each segment
