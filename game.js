@@ -8,11 +8,13 @@ const ctx    = canvas.getContext('2d');
 
 // ── Globals (set by resize) ──────────────────────────────────
 let W, H, DRONE_Y;
+const HUD_H = 54;   // px reserved for top header bar
 
 function resize() {
   W = canvas.width  = window.innerWidth;
   H = canvas.height = window.innerHeight;
-  DRONE_Y = Math.round(H * 0.72);   // drone screen Y (fixed position)
+  // drone Y is relative to the cave area (below header)
+  DRONE_Y = Math.round(HUD_H + (H - HUD_H) * 0.72);
   if (G) G.onResize();
 }
 window.addEventListener('resize', resize);
@@ -174,14 +176,20 @@ class Cave {
   }
 
   draw() {
+    // clip all cave drawing to below the header
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, HUD_H, W, H - HUD_H);
+    ctx.clip();
+
     // background — deep space-cave
     ctx.fillStyle = '#000509';
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, HUD_H, W, H - HUD_H);
 
-    // collect wall positions in screen-space
+    // collect wall positions in screen-space (start from HUD_H)
     const leftPts  = [];
     const rightPts = [];
-    for (let sy = -CFG.SEG_H; sy <= H + CFG.SEG_H; sy += CFG.SEG_H) {
+    for (let sy = HUD_H - CFG.SEG_H; sy <= H + CFG.SEG_H; sy += CFG.SEG_H) {
       const s = this.segAt(sy);
       leftPts.push([s.left, sy]);
       rightPts.push([s.right, sy]);
@@ -292,7 +300,8 @@ class Cave {
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
-    ctx.restore();
+    ctx.restore();   // restore inner-glow save
+    ctx.restore();   // restore cave clip
   }
 }
 
@@ -1531,200 +1540,157 @@ function drawBoostBar(drone) {
   ctx.fillText(lbl, bx + bw / 2, by + bh + 4);
 }
 
-// ── Dashboard (right-side canvas panel) ──────────────────────
-function drawDashboard(game) {
+// ── Header HUD (top bar) ─────────────────────────────────────
+function drawHeader(game) {
   const drone = game.drone;
-  const dw    = 120;
-  const dx    = W - dw;
   const now   = Date.now();
 
-  // background panel
-  ctx.fillStyle = 'rgba(0,6,18,0.88)';
-  ctx.fillRect(dx, 0, dw, H);
+  // panel background
+  ctx.fillStyle = 'rgba(0,5,16,0.92)';
+  ctx.fillRect(0, 0, W, HUD_H);
 
-  // left border glow
-  ctx.strokeStyle = 'rgba(0,200,255,0.55)';
+  // bottom border glow
+  ctx.strokeStyle = 'rgba(0,200,255,0.5)';
   ctx.lineWidth   = 1.5;
-  ctx.beginPath(); ctx.moveTo(dx, 0); ctx.lineTo(dx, H); ctx.stroke();
-
-  // inner panel border
-  ctx.strokeStyle = 'rgba(0,200,255,0.15)';
+  ctx.beginPath(); ctx.moveTo(0, HUD_H); ctx.lineTo(W, HUD_H); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,200,255,0.12)';
   ctx.lineWidth   = 1;
-  ctx.strokeRect(dx + 2, 2, dw - 4, H - 4);
+  ctx.beginPath(); ctx.moveTo(0, HUD_H - 2); ctx.lineTo(W, HUD_H - 2); ctx.stroke();
 
-  const cx = dx + dw / 2;
-  let oy   = 12;
-  const lbl = (txt, y) => {
-    ctx.fillStyle    = 'rgba(0,140,190,0.7)';
+  // ── layout: divide header into sections ─────────────────────
+  const mid  = HUD_H / 2;
+  const pad  = 10;
+  let   ox   = pad;
+
+  const small = (txt, x, y, color = 'rgba(0,130,170,0.8)') => {
+    ctx.fillStyle    = color;
     ctx.font         = '7px Courier New';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText(txt, cx, y);
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(txt, x, y);
   };
-  const sep = (y) => {
-    ctx.strokeStyle = 'rgba(0,200,255,0.18)';
+  const big = (txt, x, y, color, size = 18) => {
+    ctx.fillStyle    = color;
+    ctx.font         = `bold ${size}px "Courier New"`;
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(txt, x, y);
+  };
+  const vsep = (x) => {
+    ctx.strokeStyle = 'rgba(0,180,255,0.2)';
     ctx.lineWidth   = 1;
-    ctx.beginPath(); ctx.moveTo(dx + 10, y); ctx.lineTo(dx + dw - 10, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, 6); ctx.lineTo(x, HUD_H - 6); ctx.stroke();
   };
 
-  // ◈ header
-  ctx.fillStyle    = 'rgba(0,160,210,0.55)';
-  ctx.font         = '7px Courier New';
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText('◈ SYSTEMS ◈', cx, oy);
-  oy += 13; sep(oy); oy += 7;
+  // ── LEVEL ────────────────────────────────────────────────────
+  small('LVL', ox, mid - 8);
+  const lvlPulse = 0.72 + 0.28 * Math.sin(now * 0.002);
+  ctx.shadowBlur = 8 * lvlPulse; ctx.shadowColor = '#00ffff';
+  big(String(game.level), ox, mid + 6, `rgba(0,255,255,${lvlPulse})`, 16);
+  ctx.shadowBlur = 0;
+  ox += ctx.measureText(String(game.level)).width + 18;
 
-  // LEVEL (large, glowing)
-  lbl('LEVEL', oy); oy += 10;
-  const lvlPulse = 0.7 + 0.3 * Math.sin(now * 0.002);
-  ctx.shadowBlur  = 10 * lvlPulse;
-  ctx.shadowColor = '#00ffff';
-  ctx.fillStyle   = `rgba(0,255,255,${lvlPulse})`;
-  ctx.font        = `bold 30px 'Courier New'`;
-  ctx.textAlign   = 'center';
-  ctx.textBaseline= 'top';
-  ctx.fillText(game.level, cx, oy);
-  ctx.shadowBlur  = 0;
-  oy += 34; sep(oy); oy += 7;
+  vsep(ox - 8);
 
-  // SCORE
-  lbl('SCORE', oy); oy += 10;
-  ctx.fillStyle    = '#00ffcc';
-  ctx.font         = `bold ${game.score >= 1e6 ? '10' : game.score >= 100000 ? '11' : '13'}px 'Courier New'`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText(game.score.toLocaleString(), cx, oy);
-  oy += 17;
+  // ── SCORE ────────────────────────────────────────────────────
+  small('SCORE', ox, mid - 8);
+  big(game.score.toLocaleString(), ox, mid + 6, '#00ffcc', 14);
+  ox += Math.max(ctx.measureText(game.score.toLocaleString()).width, 70) + 16;
 
-  // MULTIPLIER
-  lbl('MULT', oy); oy += 10;
+  vsep(ox - 8);
+
+  // ── MULTIPLIER ───────────────────────────────────────────────
   const mult      = game.scoreMultiplier || 1;
-  const multColor = mult >= 4 ? '#ff4400' : mult >= 2 ? '#ff9900' : '#444455';
-  if (mult > 1) { ctx.shadowBlur = 8; ctx.shadowColor = multColor; }
-  ctx.fillStyle    = mult > 1 ? multColor : 'rgba(60,70,90,0.9)';
-  ctx.font         = `bold 15px 'Courier New'`;
-  ctx.textAlign    = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText(`\u00d7${mult.toFixed(1)}`, cx, oy);
-  ctx.shadowBlur   = 0;
-  oy += 20; sep(oy); oy += 7;
+  const multColor = mult >= 4 ? '#ff4400' : mult >= 2 ? '#ff9900' : 'rgba(60,80,100,0.9)';
+  small('MULT', ox, mid - 8);
+  if (mult > 1) { ctx.shadowBlur = 6; ctx.shadowColor = multColor; }
+  big(`×${mult.toFixed(1)}`, ox, mid + 6, multColor, 14);
+  ctx.shadowBlur = 0;
+  ox += 52;
 
-  // HULL (lives)
-  lbl('HULL', oy); oy += 10;
-  const lives  = drone ? drone.lives : 0;
-  const pipW   = 10, pipGap = 3;
-  const totPW  = CFG.MAX_LIVES * (pipW + pipGap) - pipGap;
-  let   pipX   = cx - totPW / 2;
+  vsep(ox - 8);
+
+  // ── HULL (life pips) ─────────────────────────────────────────
+  small('HULL', ox, mid - 8);
+  const lives = drone ? drone.lives : 0;
+  const pipW = 9, pipGap = 3;
+  let pipX = ox;
+  const pipY = mid + 6;
   for (let i = 0; i < CFG.MAX_LIVES; i++) {
     ctx.fillStyle  = i < lives ? '#ff3355' : '#221122';
-    ctx.shadowBlur = i < lives ? 4 : 0;
-    ctx.shadowColor= '#ff3355';
+    ctx.shadowBlur = i < lives ? 4 : 0; ctx.shadowColor = '#ff3355';
     ctx.beginPath();
-    ctx.moveTo(pipX + pipW / 2, oy);
-    ctx.lineTo(pipX + pipW,     oy + 4);
-    ctx.lineTo(pipX + pipW / 2, oy + 8);
-    ctx.lineTo(pipX,            oy + 4);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(pipX + pipW / 2, pipY - 5);
+    ctx.lineTo(pipX + pipW,     pipY);
+    ctx.lineTo(pipX + pipW / 2, pipY + 5);
+    ctx.lineTo(pipX,            pipY);
+    ctx.closePath(); ctx.fill();
     ctx.shadowBlur = 0;
     pipX += pipW + pipGap;
   }
-  oy += 16; sep(oy); oy += 7;
+  ox += CFG.MAX_LIVES * (pipW + pipGap) + 14;
 
-  // STATUS
-  lbl('STATUS', oy); oy += 10;
-  let anyStatus = false;
+  vsep(ox - 8);
 
-  const statusBar = (label, color, pct) => {
-    anyStatus = true;
-    ctx.fillStyle    = color;
-    ctx.font         = '8px Courier New';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText(label, cx, oy);
-    oy += 11;
-    const bw = dw - 22, bx2 = dx + 11;
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(bx2, oy, bw, 4);
-    ctx.fillStyle = color + 'bb';
-    ctx.fillRect(bx2, oy, bw * Math.max(0, Math.min(1, pct)), 4);
-    oy += 9;
-  };
-
+  // ── ACTIVE STATUS ────────────────────────────────────────────
+  let statusStr = 'NOMINAL';
+  let statusColor = 'rgba(50,80,90,0.8)';
   if (drone) {
     if (drone.weapon !== 'default') {
-      const wc = { spread:'#ffee00', homing:'#ff44cc', explosive:'#ff6600' }[drone.weapon] || '#fff';
-      statusBar(`◆ ${drone.weapon.toUpperCase()}`, wc, drone.weaponMs / CFG.WEAPON_MS);
+      const wc = { spread:'#ffee00', homing:'#ff44cc', explosive:'#ff6600' };
+      statusStr  = drone.weapon.toUpperCase();
+      statusColor = wc[drone.weapon] || '#fff';
+    } else if (drone.shield) {
+      statusStr = 'SHIELD'; statusColor = '#44aaff';
+    } else if (drone.speedBoost) {
+      statusStr = 'SPEED+'; statusColor = '#00ff88';
+    } else if (drone.magnet) {
+      statusStr = 'MAGNET'; statusColor = '#cc44ff';
     }
-    if (drone.shield)     statusBar('◆ SHIELD',  '#44aaff', drone.shieldMs  / CFG.SHIELD_MS);
-    if (drone.speedBoost) statusBar('◆ SPEED+',  '#00ff88', drone.speedMs   / CFG.SPEED_MS);
-    if (drone.magnet)     statusBar('◆ MAGNET',  '#cc44ff', drone.magnetMs  / CFG.MAGNET_MS);
   }
-  if (!anyStatus) {
-    ctx.fillStyle    = 'rgba(50,70,90,0.8)';
-    ctx.font         = '8px Courier New';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText('NOMINAL', cx, oy);
-    oy += 12;
-  }
+  small('STATUS', ox, mid - 8);
+  big(statusStr, ox, mid + 6, statusColor, 12);
+  ox += Math.max(ctx.measureText(statusStr).width + 4, 62) + 14;
 
-  sep(oy); oy += 7;
+  vsep(ox - 8);
 
-  // SLOW and BOOST horizontal bars
-  const barW = dw - 22, barX = dx + 11, barH2 = 9;
+  // ── POWER BARS (SLOW / BOOST / DEPTH) ────────────────────────
+  // remaining space for bars
+  const barsStart  = ox;
+  const barsEnd    = W - pad;
+  const barsWidth  = barsEnd - barsStart;
+  const barCount   = 3;
+  const barSlotW   = Math.floor(barsWidth / barCount);
+  const barH       = 7;
+  const barLabelY  = mid - 7;
+  const barY       = mid + 2;
 
-  lbl('SLOW', oy); oy += 9;
-  const sFuelPct = game.sFuel / CFG.SLOW_MAX;
-  ctx.fillStyle = '#001018'; ctx.fillRect(barX, oy, barW, barH2);
-  if (sFuelPct > 0) {
-    const gs = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-    gs.addColorStop(0, sFuelPct > 0.3 ? '#0044cc' : '#aa2200');
-    gs.addColorStop(1, sFuelPct > 0.3 ? '#00bbff' : '#ff6600');
-    ctx.fillStyle = gs; ctx.fillRect(barX, oy, barW * sFuelPct, barH2);
-  }
-  ctx.strokeStyle = '#002233'; ctx.lineWidth = 1; ctx.strokeRect(barX, oy, barW, barH2);
-  oy += barH2 + 9;
-
-  const boostPct = drone ? drone.boostFuel / CFG.BOOST_FUEL_MAX : 0;
-  const bFail    = drone && drone.boostFailing;
-  const bWarn    = drone && !bFail && drone.boostFuel < CFG.BOOST_WARN_AT;
-  lbl(bFail ? 'BOOST FAIL' : 'BOOST', oy);
-  if (bFail || bWarn) { ctx.fillStyle = bFail ? '#ff3300' : '#ff8800'; ctx.font = '7px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(bFail ? 'BOOST FAIL' : 'BOOST', cx, oy); }
-  oy += 9;
-  ctx.fillStyle = '#001008'; ctx.fillRect(barX, oy, barW, barH2);
-  if (boostPct > 0) {
-    const t2 = now * 0.009;
-    const pulse2 = bWarn ? 0.65 + 0.35 * Math.abs(Math.sin(t2 * 1.6)) : 1;
-    const gb = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-    if (bFail) {
-      gb.addColorStop(0, `rgba(120,0,0,${pulse2})`); gb.addColorStop(1, `rgba(255,30,0,${pulse2})`);
-    } else if (bWarn) {
-      gb.addColorStop(0, `rgba(180,60,0,${pulse2})`); gb.addColorStop(1, `rgba(255,140,0,${pulse2})`);
-    } else {
-      gb.addColorStop(0, '#0055cc'); gb.addColorStop(1, '#44eeff');
+  const drawBar = (label, value, maxVal, x, colorA, colorB, warn = false, fail = false) => {
+    const bw   = barSlotW - 14;
+    const pct  = Math.max(0, Math.min(1, value / maxVal));
+    const lc   = fail ? '#ff3300' : warn ? '#ff8800' : 'rgba(0,130,170,0.8)';
+    small(label, x, barLabelY, lc);
+    ctx.fillStyle = 'rgba(0,20,35,0.8)';
+    ctx.fillRect(x, barY, bw, barH);
+    if (pct > 0) {
+      const g = ctx.createLinearGradient(x, 0, x + bw, 0);
+      if (fail)       { g.addColorStop(0,'#660000'); g.addColorStop(1,'#ff2200'); }
+      else if (warn)  { g.addColorStop(0,'#883300'); g.addColorStop(1,'#ffaa00'); }
+      else            { g.addColorStop(0, colorA);   g.addColorStop(1, colorB);   }
+      ctx.fillStyle = g;
+      ctx.fillRect(x, barY, bw * pct, barH);
     }
-    ctx.fillStyle = gb; ctx.fillRect(barX, oy, barW * boostPct, barH2);
-  }
-  const warnTick = barX + barW * (CFG.BOOST_WARN_AT / CFG.BOOST_FUEL_MAX);
-  ctx.strokeStyle = 'rgba(255,120,0,0.4)'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(warnTick, oy); ctx.lineTo(warnTick, oy + barH2); ctx.stroke();
-  ctx.strokeStyle = bFail ? '#440000' : '#002310'; ctx.lineWidth = 1; ctx.strokeRect(barX, oy, barW, barH2);
-  oy += barH2 + 9;
+    ctx.strokeStyle = 'rgba(0,100,150,0.3)'; ctx.lineWidth = 1;
+    ctx.strokeRect(x, barY, bw, barH);
+  };
 
-  sep(oy); oy += 7;
+  const bFail = drone && drone.boostFailing;
+  const bWarn = drone && !bFail && drone.boostFuel < CFG.BOOST_WARN_AT;
+  const bPct  = drone ? drone.boostFuel / CFG.BOOST_FUEL_MAX : 0;
 
-  // DEPTH progress bar
-  const depthPct = Math.min(1, (game.distanceDone || 0) / (game.levelDist || 1));
-  lbl(`DEPTH  ${Math.round(depthPct * 100)}%`, oy); oy += 9;
-  ctx.fillStyle = '#001018'; ctx.fillRect(barX, oy, barW, barH2);
-  if (depthPct > 0) {
-    const gd = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-    gd.addColorStop(0, '#004422'); gd.addColorStop(1, '#00ff66');
-    ctx.fillStyle = gd; ctx.fillRect(barX, oy, barW * depthPct, barH2);
-  }
-  ctx.strokeStyle = '#002233'; ctx.lineWidth = 1; ctx.strokeRect(barX, oy, barW, barH2);
+  drawBar('SLOW',  game.sFuel,           CFG.SLOW_MAX,       barsStart,              '#0044cc','#00bbff', game.sFuel < 25);
+  drawBar('BOOST', drone ? drone.boostFuel : 0, CFG.BOOST_FUEL_MAX, barsStart + barSlotW,   '#0055cc','#44eeff', bWarn, bFail);
+  drawBar('DEPTH', game.distanceDone||0, game.levelDist||1,  barsStart + barSlotW*2, '#004422','#00ff66');
 
   // reset
   ctx.textAlign    = 'left';
@@ -2193,7 +2159,7 @@ class Game {
     const pu = new PowerUp(cp, this.cave);
     pu.type  = type;
     pu.cfg   = PU_TYPES[type];
-    pu.x     = clamp(x + rand(-20, 20), 30, W - 145);
+    pu.x     = clamp(x + rand(-20, 20), 30, W - 30);
     this.pups.push(pu);
   }
 
@@ -2218,7 +2184,7 @@ class Game {
 
     // autopilot drone
     if (this.drone) {
-      const aimX = (W - 120) / 2;
+      const aimX = W / 2;
       this.drone.x      = lerp(this.drone.x, aimX, 0.04);
       this.drone.y      = lerp(this.drone.y, DRONE_Y, 0.06);
       this.drone.vx    *= 0.82;
@@ -2245,14 +2211,14 @@ class Game {
   }
 
   _drawCut() {
-    const caveW = W - 120;
-    const cx    = caveW / 2;
+    const caveW = W;
+    const cx    = W / 2;
     const t     = Date.now();
 
     if (this.cutPhase === 'tally') {
       const alpha = Math.min(1, this.cutTimer / 420);
       ctx.fillStyle = `rgba(0,0,20,${0.52 * alpha})`;
-      ctx.fillRect(0, 0, caveW, H);
+      ctx.fillRect(0, HUD_H, caveW, H - HUD_H);
 
       const glow = 0.75 + 0.25 * Math.sin(t * 0.0028);
       ctx.save();
@@ -2307,7 +2273,7 @@ class Game {
       if (phaseT < 110) {
         const fa = 0.65 * (1 - phaseT / 110);
         ctx.fillStyle = `rgba(255,255,255,${fa})`;
-        ctx.fillRect(0, 0, caveW, H);
+        ctx.fillRect(0, HUD_H, caveW, H - HUD_H);
       }
 
       // static noise
@@ -2447,8 +2413,8 @@ class Game {
         this._vignette();
       }
 
-      // right-side dashboard (playing + levelcut)
-      drawDashboard(this);
+      // top header HUD (playing + levelcut)
+      drawHeader(this);
     }
 
     ctx.restore();
