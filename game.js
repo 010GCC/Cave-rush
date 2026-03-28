@@ -110,6 +110,11 @@ class Cave {
     this.minGap = Math.max(90, CFG.MIN_GAP_L1 - red);
     this.maxGap = Math.max(this.minGap + 60, CFG.MAX_GAP - red * 0.4);
 
+    // ring crystal spawn hints: { cp, type:'apex'|'straight', cx, gap }
+    this.spawnHints   = [];
+    this._prevCVSign  = 0;
+    this._straightCnt = 0;
+
     // pre-generate enough for first frame
     const need = Math.ceil((DRONE_Y + 60) / CFG.SEG_H) + 50;
     for (let i = 0; i < need; i++) this._gen();
@@ -130,6 +135,23 @@ class Cave {
 
     const seg = { left: this.gC - half, right: this.gC + half };
     this.segs.push(seg);
+
+    // detect curve apexes (velocity sign flip) and straight runs for ring spawning
+    const cvSign = this.gCV > 0.4 ? 1 : this.gCV < -0.4 ? -1 : 0;
+    if (cvSign !== 0 && this._prevCVSign !== 0 && cvSign !== this._prevCVSign) {
+      this.spawnHints.push({ cp: this.segs.length * CFG.SEG_H, type: 'apex', cx: this.gC, gap: this.gG });
+    }
+    if (cvSign !== 0) this._prevCVSign = cvSign;
+
+    if (Math.abs(this.gCV) < 0.9) {
+      this._straightCnt++;
+      if (this._straightCnt === 30) {
+        this.spawnHints.push({ cp: this.segs.length * CFG.SEG_H, type: 'straight', cx: this.gC, gap: this.gG });
+        this._straightCnt = 0;
+      }
+    } else {
+      this._straightCnt = 0;
+    }
 
     // 12% chance to add a wall decoration each segment
     if (Math.random() < 0.12) {
@@ -718,6 +740,79 @@ class Crystal {
   }
 }
 
+// ── Ring Crystal (Sonic-style collectible) ────────────────────
+class RingCrystal {
+  constructor(cp, x) {
+    this.cp        = cp;
+    this.x         = x;
+    this.collected = false;
+    this.ph        = Math.random() * Math.PI * 2;
+    this.spin      = 0;
+    this.r         = 11;
+  }
+
+  screenY(cave) { return DRONE_Y - (this.cp - cave.scroll); }
+
+  update() { this.ph += 0.055; this.spin += 0.04; }
+
+  draw(cave) {
+    const sy = this.screenY(cave) + Math.sin(this.ph) * 4;
+    if (sy < -30 || sy > H + 30) return;
+
+    const glo = 0.5 + 0.5 * Math.sin(this.ph * 2.5);
+    const r   = this.r;
+    ctx.save();
+    ctx.translate(this.x, sy);
+    ctx.rotate(this.spin);
+
+    // outer pulse halo
+    const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.8);
+    halo.addColorStop(0,   `rgba(0,230,255,${0.22 * glo})`);
+    halo.addColorStop(0.5, `rgba(0,180,255,${0.10 * glo})`);
+    halo.addColorStop(1,   'transparent');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 2.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // crystal body (diamond)
+    ctx.shadowBlur  = 16 * glo;
+    ctx.shadowColor = '#00eeff';
+    ctx.strokeStyle = `rgba(0,240,255,${0.6 + 0.4 * glo})`;
+    ctx.fillStyle   = `rgba(0,200,255,${0.12 + 0.18 * glo})`;
+    ctx.lineWidth   = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r * 0.62, 0);
+    ctx.lineTo(0, r);
+    ctx.lineTo(-r * 0.62, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // inner sparkle
+    ctx.shadowBlur  = 8 * glo;
+    ctx.strokeStyle = `rgba(180,255,255,${0.5 * glo})`;
+    ctx.lineWidth   = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.45);
+    ctx.lineTo(r * 0.28, 0);
+    ctx.lineTo(0, r * 0.45);
+    ctx.lineTo(-r * 0.28, 0);
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  checkCollect(drone, cave, magnetActive) {
+    const sy = this.screenY(cave);
+    const d  = Math.hypot(this.x - drone.x, sy - drone.y);
+    return d < this.r + (magnetActive ? CFG.MAGNET_RADIUS : 16);
+  }
+}
+
 // ── Stalactite ────────────────────────────────────────────────
 class Stalactite {
   constructor(caveProgress, cave) {
@@ -1035,12 +1130,12 @@ class DPad {
 
     // D-pad directional buttons
     const dirs = [
-      { k:'up',    dx:0,    dy:-gap, sym:'▲' },
-      { k:'down',  dx:0,    dy: gap, sym:'▼' },
-      { k:'left',  dx:-gap, dy:0,    sym:'◀' },
-      { k:'right', dx: gap, dy:0,    sym:'▶' },
+      { k:'up',    dx:0,    dy:-gap },
+      { k:'down',  dx:0,    dy: gap },
+      { k:'left',  dx:-gap, dy:0    },
+      { k:'right', dx: gap, dy:0    },
     ];
-    for (const { k, dx, dy, sym } of dirs) {
+    for (const { k, dx, dy } of dirs) {
       const bx  = cx + dx, by = cy + dy;
       const act = KEY[k];
       ctx.fillStyle   = act ? '#003a6e' : '#001830';
@@ -1049,11 +1144,6 @@ class DPad {
       ctx.beginPath();
       ctx.arc(bx, by, br, 0, Math.PI*2);
       ctx.fill(); ctx.stroke();
-      ctx.fillStyle    = act ? '#44ddff' : '#225588';
-      ctx.font         = `${Math.round(br * 0.72)}px sans-serif`;
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(sym, bx, by + 1);
     }
 
     // ── FIRE button (large, bottom-right) ──
@@ -1183,6 +1273,7 @@ class Enemy {
     this.ph   = Math.random() * Math.PI * 2;
     this.W    = type === 'scout' ? 16 : 22;
     this.H    = type === 'scout' ? 12 : 18;
+    this.lootDrop = null;  // 'LIFE' if this enemy guarantees a life drop
   }
 
   update(dt, cave, drone, enemyBullets) {
@@ -1654,6 +1745,18 @@ function drawHeader(game) {
 
   vsep(ox - 8);
 
+  // ── RING CRYSTALS ─────────────────────────────────────────────
+  small('CRYSTALS', ox, mid - 8);
+  const ringCount   = game.ringCount || 0;
+  const ringPulse   = 0.6 + 0.4 * Math.sin(now * 0.004);
+  const ringColor   = ringCount > 0 ? `rgba(0,230,255,${ringPulse})` : 'rgba(0,70,90,0.6)';
+  if (ringCount > 0) { ctx.shadowBlur = 6 * ringPulse; ctx.shadowColor = '#00eeff'; }
+  big(String(ringCount), ox, mid + 6, ringColor, 14);
+  ctx.shadowBlur = 0;
+  ox += Math.max(ctx.measureText(String(ringCount)).width, 32) + 18;
+
+  vsep(ox - 8);
+
   // ── POWER BARS (SLOW / BOOST / DEPTH) ────────────────────────
   // remaining space for bars
   const barsStart  = ox;
@@ -1755,6 +1858,8 @@ class Game {
     this.drone         = null;
     this.pups          = [];
     this.crystals      = [];
+    this.rings         = [];
+    this.ringCount     = 0;
     this.stalas        = [];
     this.rocks         = [];
     this.enemies       = [];
@@ -1770,6 +1875,8 @@ class Game {
     this.cutTimer        = 0;
     this.cutBonus        = 0;
     this.cutTallyAmt     = 0;
+    this.cutCrystalBonus = 0;
+    this.cutCrystalTally = 0;
     this.dpad         = new DPad();
     this.slines       = new SpeedLines();
 
@@ -1837,6 +1944,8 @@ class Game {
     this.drone         = new Drone();
     this.pups          = [];
     this.crystals      = [];
+    this.rings         = [];
+    this.ringCount     = 0;
     this.stalas        = [];
     this.rocks         = [];
     this.enemies       = [];
@@ -1945,6 +2054,7 @@ class Game {
         triggerShake(6, 280);
         this._burst(this.drone.x, this.drone.y, '#aa6622', 12);
         r.dead = true;
+        this._loseRings();
         const dead = this.drone.hit();
         if (dead) { this._gameOver(); return; }
       }
@@ -1975,11 +2085,29 @@ class Game {
     }
     this.crystals = this.crystals.filter(c => !c.collected && c.screenY(this.cave) > -60);
 
+    // consume cave spawn hints → ring crystal clusters
+    while (this.cave.spawnHints.length > 0) {
+      this._spawnRingCluster(this.cave.spawnHints.shift());
+    }
+
+    // ring crystal update + collect
+    for (const rc of this.rings) {
+      rc.update();
+      if (!rc.collected && rc.checkCollect(this.drone, this.cave, magnetOn)) {
+        rc.collected = true;
+        this.ringCount++;
+        this._burst(rc.x, rc.screenY(this.cave), '#00eeff', 8);
+        this.ftexts.push(new FloatText(rc.x, rc.screenY(this.cave) - 10, '◆', '#00eeff'));
+      }
+    }
+    this.rings = this.rings.filter(rc => !rc.collected && rc.screenY(this.cave) > -60);
+
     // stalactite collision
     for (const s of this.stalas) {
       if (s.checkCollide(this.drone, this.cave)) {
         triggerShake(7, 320);
         this._burst(this.drone.x, this.drone.y, '#ff6622', 14);
+        this._loseRings();
         const dead = this.drone.hit();
         if (dead) { this._gameOver(); return; }
         break;
@@ -2012,13 +2140,15 @@ class Game {
     // ── ENEMY WAVES ───────────────────────────────────────────
     this.waveTimer -= dt;
     if (this.waveTimer <= 0) {
-      const waveSize = Math.min(4 + Math.floor(this.level * 1.4), 16);
+      const waveSize = Math.min(Math.round((4 + Math.floor(this.level * 1.4)) * 1.2), 19);
       const mixed    = this.level >= 2;
+      const lifeDropIdx = (this.level % 2 === 0) ? Math.floor(Math.random() * waveSize) : -1;
       for (let i = 0; i < waveSize; i++) {
         const type = mixed && Math.random() < 0.42 ? 'gunship' : 'scout';
         const e    = new Enemy(type, this.cave);
         e.x = rand(60, W - 60);
         e.y = -30 - i * 45;
+        if (i === lifeDropIdx) e.lootDrop = 'LIFE';
         this.enemies.push(e);
       }
       this.waveTimer = CFG.WAVE_INTERVAL;
@@ -2044,6 +2174,19 @@ class Game {
     }
     this.playerBullets = this.playerBullets.filter(b => !b.dead);
 
+    // ── ENEMY LOOT DROPS ──────────────────────────────────────
+    for (const e of this.enemies) {
+      if (e.dead && e.lootDrop) {
+        const cp = this.cave.scroll + (DRONE_Y - e.y);
+        const pu = new PowerUp(cp, this.cave);
+        pu.type = e.lootDrop;
+        pu.cfg  = PU_TYPES[e.lootDrop];
+        pu.x    = clamp(e.x, 30, W - 30);
+        this.pups.push(pu);
+        e.lootDrop = null;
+      }
+    }
+
     // ── UPDATE ENEMY BULLETS + HIT DRONE ──────────────────────
     for (const b of this.enemyBullets) {
       b.update();
@@ -2051,6 +2194,7 @@ class Game {
         b.dead = true;
         triggerShake(5, 220);
         this._burst(this.drone.x, this.drone.y, '#ff5522', 10);
+        this._loseRings();
         const dead = this.drone.hit();
         if (dead) { this._gameOver(); return; }
       }
@@ -2064,6 +2208,7 @@ class Game {
           e.hit(999); // destroy enemy on ram
           triggerShake(8, 350);
           this._burst(this.drone.x, this.drone.y, '#ff3300', 16);
+          this._loseRings();
           const dead = this.drone.hit();
           if (dead) { this._gameOver(); return; }
           break;
@@ -2076,6 +2221,7 @@ class Game {
     if (this.drone.collidesWith(this.cave)) {
       triggerShake(7, 320);
       this._burst(this.drone.x, this.drone.y, '#ff3344', 18);
+      this._loseRings();
       const dead = this.drone.hit();
       if (dead) { this._gameOver(); return; }
     }
@@ -2163,17 +2309,46 @@ class Game {
     this.pups.push(pu);
   }
 
+  _spawnRingCluster(hint) {
+    const { cp, type, cx, gap } = hint;
+    if (type === 'apex') {
+      // arc of rings spread across the passage opening
+      const count = 3 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < count; i++) {
+        const t = count === 1 ? 0.5 : i / (count - 1);
+        const x = cx - gap * 0.32 + t * gap * 0.64;
+        this.rings.push(new RingCrystal(cp, clamp(x, 30, W - 30)));
+      }
+    } else {
+      // line of rings along travel direction, centered in passage
+      const count = 4 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < count; i++) {
+        const x = cx + rand(-18, 18);
+        this.rings.push(new RingCrystal(cp + i * 38, clamp(x, 30, W - 30)));
+      }
+    }
+  }
+
+  _loseRings() {
+    if (this.ringCount <= 0) return;
+    const lost = Math.ceil(this.ringCount / 2);
+    this.ringCount = Math.floor(this.ringCount / 2);
+    this.ftexts.push(new FloatText(this.drone.x, this.drone.y - 22, `-${lost} ◆`, '#ff4488'));
+  }
+
   _burst(x, y, color, n) {
     for (let i = 0; i < n; i++) this.parts.push(new Particle(x, y, color));
   }
 
   // ── Level Done — starts canvas cutscene ─────────────────────
   _levelDone() {
-    this.state       = 'levelcut';
-    this.cutPhase    = 'tally';
-    this.cutTimer    = 0;
-    this.cutBonus    = Math.floor(this.level * 800 * this.scoreMultiplier);
-    this.cutTallyAmt = 0;
+    this.state           = 'levelcut';
+    this.cutPhase        = 'tally';
+    this.cutTimer        = 0;
+    this.cutBonus        = Math.floor(this.level * 800 * this.scoreMultiplier);
+    this.cutTallyAmt     = 0;
+    this.cutCrystalBonus = this.ringCount * 1700;
+    this.cutCrystalTally = 0;
     document.getElementById('hud').classList.add('hidden');
   }
 
@@ -2195,9 +2370,10 @@ class Game {
 
     if (this.cutPhase === 'tally') {
       const progress = Math.min(1, this.cutTimer / CFG.CUT_TALLY_MS);
-      this.cutTallyAmt = Math.floor(this.cutBonus * progress);
+      this.cutTallyAmt     = Math.floor(this.cutBonus * progress);
+      this.cutCrystalTally = Math.floor(this.cutCrystalBonus * progress);
       if (this.cutTimer >= CFG.CUT_TALLY_MS) {
-        this.score += this.cutBonus;
+        this.score += this.cutBonus + this.cutCrystalBonus;
         this.cutPhase = 'count';
         this.cutTimer = 0;
       }
@@ -2243,26 +2419,40 @@ class Game {
         ctx.font      = `${clamp(W * 0.036, 11, 18)}px 'Courier New'`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('DEPTH BONUS', cx, H * 0.52);
+        ctx.fillText('DEPTH BONUS', cx, H * 0.49);
         ctx.fillStyle = `rgba(255,221,0,${fa})`;
         ctx.font      = `bold ${clamp(W * 0.055, 18, 30)}px 'Courier New'`;
-        ctx.fillText(`+${this.cutTallyAmt.toLocaleString()}`, cx, H * 0.61);
+        ctx.fillText(`+${this.cutTallyAmt.toLocaleString()}`, cx, H * 0.57);
       }
-      if (this.scoreMultiplier > 1 && prog > 0.5) {
-        ctx.fillStyle = `rgba(255,153,0,${alpha * Math.min(1,(prog-0.5)/0.2)})`;
+      if (this.cutCrystalBonus > 0 && prog > 0.32) {
+        const fa = alpha * Math.min(1, (prog - 0.32) / 0.18);
+        ctx.shadowBlur  = 10 * (0.5 + 0.5 * Math.sin(Date.now() * 0.004));
+        ctx.shadowColor = '#00eeff';
+        ctx.fillStyle = `rgba(0,230,255,${fa * 0.7})`;
+        ctx.font      = `${clamp(W * 0.036, 11, 18)}px 'Courier New'`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`CRYSTALS  ×${this.ringCount}`, cx, H * 0.65);
+        ctx.fillStyle = `rgba(0,240,255,${fa})`;
+        ctx.font      = `bold ${clamp(W * 0.055, 18, 30)}px 'Courier New'`;
+        ctx.fillText(`+${this.cutCrystalTally.toLocaleString()}`, cx, H * 0.73);
+        ctx.shadowBlur = 0;
+      }
+      if (this.scoreMultiplier > 1 && prog > 0.55) {
+        ctx.fillStyle = `rgba(255,153,0,${alpha * Math.min(1,(prog-0.55)/0.2)})`;
         ctx.font      = `${clamp(W * 0.036, 11, 17)}px 'Courier New'`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`MULTIPLIER ×${this.scoreMultiplier.toFixed(1)} APPLIED`, cx, H * 0.71);
+        ctx.fillText(`MULTIPLIER ×${this.scoreMultiplier.toFixed(1)} APPLIED`, cx, H * 0.80);
       }
       // score total
-      if (prog > 0.7) {
-        const fa2 = alpha * Math.min(1, (prog - 0.7) / 0.2);
+      if (prog > 0.74) {
+        const fa2 = alpha * Math.min(1, (prog - 0.74) / 0.2);
         ctx.fillStyle = `rgba(100,200,255,${fa2})`;
         ctx.font      = `${clamp(W * 0.032, 10, 16)}px 'Courier New'`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`SCORE  ${this.score.toLocaleString()}`, cx, H * 0.80);
+        ctx.fillText(`SCORE  ${this.score.toLocaleString()}`, cx, H * 0.88);
       }
 
     } else if (this.cutPhase === 'count') {
@@ -2348,6 +2538,9 @@ class Game {
 
       // crystals
       for (const c of this.crystals) c.draw(this.cave);
+
+      // ring crystals
+      for (const rc of this.rings) rc.draw(this.cave);
 
       // power-ups
       for (const p of this.pups)   p.draw(this.cave);
