@@ -2104,7 +2104,7 @@ class Game {
         this.ftexts.push(new FloatText(rc.x, rc.screenY(this.cave) - 10, '◆', '#00eeff'));
       }
     }
-    this.rings = this.rings.filter(rc => !rc.collected && rc.screenY(this.cave) > -60);
+    this.rings = this.rings.filter(rc => !rc.collected && rc.screenY(this.cave) < H + 60);
 
     // stalactite collision
     for (const s of this.stalas) {
