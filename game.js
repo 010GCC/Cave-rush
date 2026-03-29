@@ -2317,7 +2317,7 @@ class Game {
     const { cp, type, cx, gap } = hint;
     if (type === 'apex') {
       // arc of rings spread across the passage opening
-      const count = 3 + Math.floor(Math.random() * 3);
+      const count = 1 + Math.floor(Math.random() * 2);
       for (let i = 0; i < count; i++) {
         const t = count === 1 ? 0.5 : i / (count - 1);
         const x = cx - gap * 0.32 + t * gap * 0.64;
@@ -2325,7 +2325,7 @@ class Game {
       }
     } else {
       // line of rings along travel direction, centered in passage
-      const count = 4 + Math.floor(Math.random() * 4);
+      const count = 1 + Math.floor(Math.random() * 2);
       for (let i = 0; i < count; i++) {
         const x = cx + rand(-18, 18);
         this.rings.push(new RingCrystal(cp + i * 38, clamp(x, 30, W - 30)));
