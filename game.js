@@ -7,14 +7,16 @@ const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
 
 // ── Globals (set by resize) ──────────────────────────────────
-let W, H, DRONE_Y;
+let W, H, DRONE_Y, PANEL_Y;
 const HUD_H = 54;   // px reserved for top header bar
 
 function resize() {
   W = canvas.width  = window.innerWidth;
   H = canvas.height = window.innerHeight;
-  // drone Y is relative to the cave area (below header)
-  DRONE_Y = Math.round(HUD_H + (H - HUD_H) * 0.72);
+  // bottom dashboard panel top (mirrors DPad.resize calculation)
+  PANEL_Y = H - Math.min(H * 0.26, 190) - 8;
+  // drone Y sits 60% down the playable area (between header and panel)
+  DRONE_Y = Math.round(HUD_H + (PANEL_Y - HUD_H) * 0.60);
   if (G) G.onResize();
 }
 window.addEventListener('resize', resize);
@@ -65,7 +67,7 @@ const CFG = {
   ROCK_AHEAD_MIN:   500,
   ROCK_AHEAD_MAX:   1000,
   CUT_TALLY_MS:     2800,    // level-complete tally phase duration
-  CUT_COUNT_MS:     750,     // ms per countdown digit (3, 2, 1, ENGAGE)
+  CUT_COUNT_MS:     750,     // ms per countdown digit (3, 2, 1, EXPLORE)
 };
 
 // ── Utility ──────────────────────────────────────────────────
@@ -381,7 +383,7 @@ class Drone {
     this.y += this.vy;
 
     this.x = clamp(this.x, this.W + 5, W - this.W - 5);
-    this.y = clamp(this.y, H * 0.25, H * 0.88);
+    this.y = clamp(this.y, H * 0.25, PANEL_Y - this.H - 4);
 
     this.tilt     = lerp(this.tilt, this.vx * 0.055, 0.22);
     this.thrustPh += 0.28;
@@ -1063,7 +1065,7 @@ class DPad {
   }
 
   resize() {
-    const safeBot = 22;                          // clearance above address bar
+    const safeBot = 8;                           // clearance above address bar
     const ph      = Math.min(H * 0.26, 190);    // panel height
     this.panelY   = H - ph - safeBot;
 
@@ -2485,7 +2487,7 @@ class Game {
       const sAlpha = Math.max(0, 0.30 * (1 - phaseT / (CFG.CUT_COUNT_MS * 0.65)));
       if (sAlpha > 0.01) drawStaticEffect(sAlpha);
 
-      const labels = ['3', '2', '1', 'ENGAGE!'];
+      const labels = ['3', '2', '1', 'EXPLORE!'];
       const colors = ['#ff3333', '#ffaa00', '#ffff00', '#00ffcc'];
       if (idx < 4) {
         const label = labels[idx];
