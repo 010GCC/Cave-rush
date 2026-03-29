@@ -1063,27 +1063,34 @@ class DPad {
   }
 
   resize() {
-    const pad  = Math.min(W, H) * 0.075 + 28;
-    // D-pad (left side)
-    this.cx   = pad + 6;
-    this.cy   = H - pad - 6;
-    this.gap  = pad * 0.88;
-    this.br   = pad * 0.58;
+    const safeBot = 22;                          // clearance above address bar
+    const ph      = Math.min(H * 0.26, 190);    // panel height
+    this.panelY   = H - ph - safeBot;
 
-    // Right action cluster
-    const rbr   = pad * 0.78;           // FIRE button radius
-    this.firer  = rbr;
-    this.firex  = W - rbr - 10;
-    this.firey  = H - rbr - 8;
+    const unit  = ph * 0.23;                    // base sizing unit
 
-    const sbr   = pad * 0.54;           // SLOW / BOOST radius
-    this.sr     = sbr;
-    this.scx    = this.firex - rbr - sbr - 6;   // SLOW: left of FIRE
-    this.scy    = this.firey;
+    // FIRE (large, right side, lower-centre of panel)
+    const firer  = unit * 1.1;
+    this.firer   = firer;
+    this.firex   = W - firer - 16;
+    this.firey   = this.panelY + ph * 0.68;
 
-    this.boostr = sbr;
-    this.boostx = this.firex;
-    this.boosty = this.firey - rbr - sbr - 8;   // BOOST: above FIRE
+    // SLOW (left of FIRE, same height)
+    const sbr    = unit * 0.72;
+    this.sr      = sbr;
+    this.scx     = this.firex - firer - sbr - 10;
+    this.scy     = this.firey;
+
+    // BOOST (above FIRE, kept inside panel)
+    this.boostr  = sbr;
+    this.boostx  = this.firex;
+    this.boosty  = this.firey - firer - sbr - 8;
+
+    // D-pad (left side, fully on-screen)
+    this.gap = unit * 1.05;
+    this.br  = unit * 0.60;
+    this.cx  = this.gap + this.br + 14;         // left button always on-screen
+    this.cy  = this.panelY + ph * 0.50;
   }
 
   _track(e) {
@@ -1122,17 +1129,26 @@ class DPad {
             firex, firey, firer, boostx, boosty, boostr } = this;
 
     ctx.save();
-    ctx.globalAlpha = 0.54;
 
-    // D-pad backing disc
-    ctx.fillStyle   = 'rgba(0,8,22,0.7)';
-    ctx.strokeStyle = '#1a3355';
+    // ── Control panel background ──────────────────────────────
+    ctx.fillStyle = 'rgba(0,4,14,0.88)';
+    ctx.fillRect(0, this.panelY, W, H - this.panelY);
+    ctx.strokeStyle = 'rgba(0,150,255,0.22)';
     ctx.lineWidth   = 1;
     ctx.beginPath();
-    ctx.arc(cx, cy, gap + br + 8, 0, Math.PI*2);
+    ctx.moveTo(0, this.panelY);
+    ctx.lineTo(W, this.panelY);
+    ctx.stroke();
+
+    // ── D-pad backing disc ────────────────────────────────────
+    ctx.fillStyle   = 'rgba(0,8,22,0.55)';
+    ctx.strokeStyle = 'rgba(20,50,90,0.7)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, gap + br + 6, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
 
-    // D-pad directional buttons
+    // ── D-pad directional buttons (no shadow — faster on mobile) ──
     const dirs = [
       { k:'up',    dx:0,    dy:-gap },
       { k:'down',  dx:0,    dy: gap },
@@ -1142,34 +1158,34 @@ class DPad {
     for (const { k, dx, dy } of dirs) {
       const bx  = cx + dx, by = cy + dy;
       const act = KEY[k];
-      ctx.fillStyle   = act ? '#003a6e' : '#001830';
-      ctx.strokeStyle = act ? '#00aaff' : '#003366';
-      ctx.lineWidth   = act ? 2 : 1.2;
+      ctx.fillStyle   = act ? 'rgba(0,80,160,0.9)' : 'rgba(0,20,50,0.8)';
+      ctx.strokeStyle = act ? 'rgba(0,180,255,0.9)' : 'rgba(0,60,120,0.7)';
+      ctx.lineWidth   = act ? 2 : 1;
       ctx.beginPath();
-      ctx.arc(bx, by, br, 0, Math.PI*2);
+      ctx.arc(bx, by, br, 0, Math.PI * 2);
       ctx.fill(); ctx.stroke();
     }
 
-    // ── FIRE button (large, bottom-right) ──
     const drone = (typeof G !== 'undefined' && G && G.drone) ? G.drone : null;
+
+    // ── FIRE button ───────────────────────────────────────────
     const fa = KEY.fire;
-    ctx.fillStyle   = fa ? '#3a0010' : '#1a0008';
+    const weaponColors = { default:'#ff3366', spread:'#ffee00', homing:'#ff44cc', explosive:'#ff6600' };
+    const wColor = drone ? (weaponColors[drone.weapon] || '#ff3366') : '#ff3366';
+
+    ctx.fillStyle   = fa ? 'rgba(80,0,24,0.95)' : 'rgba(32,0,12,0.88)';
     ctx.strokeStyle = fa ? '#ff3366' : '#660022';
     ctx.lineWidth   = fa ? 2.5 : 1.5;
-    ctx.shadowBlur  = fa ? 14 : 0;
-    ctx.shadowColor = '#ff2244';
+    if (fa) { ctx.shadowBlur = 14; ctx.shadowColor = '#ff2244'; }
     ctx.beginPath();
-    ctx.arc(firex, firey, firer, 0, Math.PI*2);
+    ctx.arc(firex, firey, firer, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // weapon-color ring on FIRE button
-    const weaponColors = { default:'#ff3366', spread:'#ffee00', homing:'#ff44cc', explosive:'#ff6600' };
-    const wColor = drone ? (weaponColors[drone.weapon] || '#ff3366') : '#ff3366';
-    ctx.strokeStyle = wColor + (fa ? 'ff' : '88');
-    ctx.lineWidth   = 2;
+    ctx.strokeStyle = wColor + (fa ? 'ff' : '66');
+    ctx.lineWidth   = 1.8;
     ctx.beginPath();
-    ctx.arc(firex, firey, firer - 4, 0, Math.PI*2);
+    ctx.arc(firex, firey, firer - 4, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle    = fa ? '#ffaabb' : wColor;
@@ -1178,45 +1194,40 @@ class DPad {
     ctx.textBaseline = 'middle';
     ctx.fillText('FIRE', firex, firey);
 
-    // weapon label below FIRE text
     if (drone && drone.weapon !== 'default') {
       ctx.font      = `${Math.round(firer * 0.22)}px 'Courier New'`;
       ctx.fillStyle = wColor;
       ctx.fillText(drone.weapon.toUpperCase(), firex, firey + firer * 0.42);
     }
 
-    // ── SLOW button ──
+    // ── SLOW button ───────────────────────────────────────────
     const sa = KEY.slow;
-    ctx.fillStyle   = sa ? '#001e36' : '#000e1c';
-    ctx.strokeStyle = sa ? '#0099ff' : '#224455';
-    ctx.lineWidth   = sa ? 2 : 1.2;
+    ctx.fillStyle   = sa ? 'rgba(0,50,90,0.95)' : 'rgba(0,18,36,0.85)';
+    ctx.strokeStyle = sa ? '#0099ff' : 'rgba(30,70,100,0.8)';
+    ctx.lineWidth   = sa ? 2 : 1;
     ctx.beginPath();
-    ctx.arc(scx, scy, sr, 0, Math.PI*2);
+    ctx.arc(scx, scy, sr, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
-    ctx.fillStyle    = sa ? '#88ddff' : '#335577';
+    ctx.fillStyle    = sa ? '#88ddff' : 'rgba(60,110,150,0.9)';
     ctx.font         = `bold ${Math.round(sr * 0.38)}px 'Courier New'`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('SLOW', scx, scy);
 
-    // ── BOOST button ──
-    const ba       = KEY.boost;
+    // ── BOOST button ──────────────────────────────────────────
     const bActive  = drone && drone.boosting;
     const bFail    = drone && drone.boostFailing;
     const bWarn    = drone && !bFail && drone.boostFuel < CFG.BOOST_WARN_AT;
-    const bBorderC = bFail ? '#ff2200' : (bWarn ? '#ff8800' : (bActive ? '#44aaff' : '#ff8800'));
-    ctx.fillStyle   = bFail ? '#2a0000' : (bActive ? '#001a3a' : '#1a0c00');
+    const bBorderC = bFail ? '#ff2200' : (bWarn ? '#ff8800' : (bActive ? '#44aaff' : 'rgba(180,100,0,0.7)'));
+    ctx.fillStyle   = bFail ? 'rgba(50,0,0,0.95)' : (bActive ? 'rgba(0,30,70,0.95)' : 'rgba(28,14,0,0.85)');
     ctx.strokeStyle = bBorderC;
-    ctx.lineWidth   = (ba || bActive) ? 2.5 : 1.5;
-    ctx.shadowBlur  = (bFail || bActive) ? 12 : 0;
-    ctx.shadowColor = bBorderC;
+    ctx.lineWidth   = (KEY.boost || bActive) ? 2 : 1;
     ctx.beginPath();
-    ctx.arc(boostx, boosty, boostr, 0, Math.PI*2);
+    ctx.arc(boostx, boosty, boostr, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0;
 
     const bLabel = bFail ? 'FAIL!' : (bWarn ? 'WARN' : 'BOOST');
-    ctx.fillStyle    = bFail ? '#ff4400' : (bWarn ? '#ffaa00' : (bActive ? '#44ccff' : '#ffaa44'));
+    ctx.fillStyle    = bFail ? '#ff4400' : (bWarn ? '#ffaa00' : (bActive ? '#44ccff' : 'rgba(220,140,40,0.9)'));
     ctx.font         = `bold ${Math.round(boostr * 0.34)}px 'Courier New'`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
