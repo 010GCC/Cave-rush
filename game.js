@@ -1916,8 +1916,8 @@ class Game {
       <button class="btn secondary" id="bHow">HOW TO PLAY</button>
       ${hi}
     `);
-    document.getElementById('bStart').onclick = () => this._startGame();
-    document.getElementById('bHow').onclick   = () => this._howTo();
+    document.getElementById('bStart').onclick = () => { AUDIO.init(); AUDIO.playTrack(0); this._startGame(); };
+    document.getElementById('bHow').onclick   = () => { AUDIO.init(); AUDIO.playTrack(0); this._howTo(); };
   }
 
   _howTo() {
@@ -1976,6 +1976,7 @@ class Game {
     this.scoreMultiplier = 1;
     this.distanceDone  = 0;
     this.levelDist     = CFG.LEVEL_DIST + (this.level - 1) * CFG.LEVEL_DIST_INC;
+    AUDIO.playTrack(Math.min(this.level - 1, 3));
     this.state         = 'playing';
     shakeMs            = 0;
     hideScreen();
@@ -2069,6 +2070,7 @@ class Game {
       r._screenYCache = r.screenY(this.cave);
       if (!r.dead && r.checkDroneCollide(this.drone, this.cave)) {
         triggerShake(6, 280);
+        AUDIO.sfxCrash();
         this._burst(this.drone.x, this.drone.y, '#aa6622', 12);
         r.dead = true;
         this._loseRings();
@@ -2094,6 +2096,7 @@ class Game {
       c.update();
       if (!c.collected && c.checkCollect(this.drone, this.cave, magnetOn)) {
         c.collected = true;
+        AUDIO.sfxCrystal();
         const cPts = Math.round(50 * this.scoreMultiplier);
         this.score += cPts;
         this._burst(c.x, c.screenY(this.cave), c.color, 6);
@@ -2112,6 +2115,7 @@ class Game {
       rc.update();
       if (!rc.collected && rc.checkCollect(this.drone, this.cave, magnetOn)) {
         rc.collected = true;
+        AUDIO.sfxCrystal();
         this.ringCount++;
         this._burst(rc.x, rc.screenY(this.cave), '#00eeff', 8);
         this.ftexts.push(new FloatText(rc.x, rc.screenY(this.cave) - 10, '◆', '#00eeff'));
@@ -2123,6 +2127,7 @@ class Game {
     for (const s of this.stalas) {
       if (s.checkCollide(this.drone, this.cave)) {
         triggerShake(7, 320);
+        AUDIO.sfxCrash();
         this._burst(this.drone.x, this.drone.y, '#ff6622', 14);
         this._loseRings();
         const dead = this.drone.hit();
@@ -2135,6 +2140,7 @@ class Game {
     // ── FIRE ──────────────────────────────────────────────────
     if (KEY.fire && this.drone.fireTimer <= 0) {
       this.drone.fireTimer = CFG.FIRE_RATE;
+      AUDIO.sfxLaser();
       const bx = this.drone.x, by = this.drone.y - this.drone.H;
       const spd = CFG.BULLET_SPD;
       const w = this.drone.weapon;
@@ -2210,6 +2216,7 @@ class Game {
       if (!b.dead && b.checkHit(this.drone)) {
         b.dead = true;
         triggerShake(5, 220);
+        AUDIO.sfxCrash();
         this._burst(this.drone.x, this.drone.y, '#ff5522', 10);
         this._loseRings();
         const dead = this.drone.hit();
@@ -2224,6 +2231,7 @@ class Game {
         if (!e.dead && Math.hypot(e.x - this.drone.x, e.y - this.drone.y) < e.W + this.drone.W * 0.6) {
           e.hit(999); // destroy enemy on ram
           triggerShake(8, 350);
+          AUDIO.sfxCrash();
           this._burst(this.drone.x, this.drone.y, '#ff3300', 16);
           this._loseRings();
           const dead = this.drone.hit();
@@ -2237,6 +2245,7 @@ class Game {
     // collision
     if (this.drone.collidesWith(this.cave)) {
       triggerShake(7, 320);
+      AUDIO.sfxCrash();
       this._burst(this.drone.x, this.drone.y, '#ff3344', 18);
       this._loseRings();
       const dead = this.drone.hit();
@@ -2260,6 +2269,7 @@ class Game {
     const sy = pu.screenY(this.cave);
     this._burst(pu.x, sy, pu.cfg.color, 12);
     this.ftexts.push(new FloatText(pu.x, sy - 10, pu.cfg.label, pu.cfg.color));
+    AUDIO.sfxPickup();
 
     switch (pu.type) {
       case 'TIME':
@@ -2270,6 +2280,7 @@ class Game {
         this.ftexts.push(new FloatText(pu.x, sy - 30, '+500', '#ffdd00'));
         break;
       case 'LIFE':
+        AUDIO.sfxExtraLife();
         if (this.drone.lives < CFG.MAX_LIVES) this.drone.lives++;
         break;
       case 'SHIELD':
@@ -2294,6 +2305,7 @@ class Game {
         break;
       case 'MULT':
         this.scoreMultiplier = Math.min(CFG.SCORE_MULT_MAX, this.scoreMultiplier * 2);
+        AUDIO.sfxMultiplier(this.scoreMultiplier);
         this.ftexts.push(new FloatText(pu.x, sy - 28, `×${this.scoreMultiplier.toFixed(0)}`, '#ff9900'));
         break;
       case 'SPEED':
@@ -2510,6 +2522,7 @@ class Game {
 
   // ── Game Over ───────────────────────────────────────────────
   _gameOver() {
+    AUDIO.stop();
     this.state = 'gameover';
     document.getElementById('hud').classList.add('hidden');
 
@@ -2643,6 +2656,296 @@ class Game {
     }
   }
 }
+
+// ── Audio Engine ──────────────────────────────────────────────
+// Procedural 80s tribute soundtrack + SFX — Web Audio API only
+class AudioEngine {
+  constructor() {
+    this.ac = null; this.mGain = null; this.bgGain = null; this.fxGain = null;
+    this._ready = false; this._seqId = null; this._trackIdx = -1;
+    this._beatIdx = 0; this._beatLen = 0; this._steps = 0; this._nextBeat = 0;
+    this._noiseBuffer = null; this._reverb = null; this._revSend = null;
+    this._lastLaser = 0;
+  }
+
+  init() {
+    if (this._ready) return;
+    this._ready = true;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    this.ac = new AC();
+    this.mGain = this.ac.createGain(); this.mGain.gain.value = 0.78;
+    this.mGain.connect(this.ac.destination);
+    this.bgGain = this.ac.createGain(); this.bgGain.gain.value = 0.48;
+    this.bgGain.connect(this.mGain);
+    this.fxGain = this.ac.createGain(); this.fxGain.gain.value = 0.92;
+    this.fxGain.connect(this.mGain);
+    this._reverb = this._mkReverb(2.8);
+    this._revSend = this.ac.createGain(); this._revSend.gain.value = 0.28;
+    this._reverb.connect(this._revSend); this._revSend.connect(this.bgGain);
+    this._noiseBuffer = this._mkNoise(2);
+  }
+
+  _mkReverb(dur) {
+    const sr = this.ac.sampleRate, len = sr * dur | 0;
+    const buf = this.ac.createBuffer(2, len, sr);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++)
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.6);
+    }
+    const cv = this.ac.createConvolver(); cv.buffer = buf; return cv;
+  }
+
+  _mkNoise(dur) {
+    const sr = this.ac.sampleRate, len = sr * dur | 0;
+    const buf = this.ac.createBuffer(1, len, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  // ── Note helpers ──────────────────────────────────────────────
+  _note(t, freq, dur, vol, type, dest, slide = 0) {
+    const o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + 0.1);
+  }
+  _noteRev(t, freq, dur, vol, type = 'sine') {
+    this._note(t, freq, dur, vol,        type, this.bgGain);
+    this._note(t, freq, dur, vol * 0.35, type, this._reverb);
+  }
+  _pad(t, freq, dur, vol) {
+    for (const det of [-5, 0, 5])
+      this._noteRev(t, freq * Math.pow(2, det / 1200), dur, vol / 3);
+  }
+  _kick(t) {
+    const o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.frequency.setValueAtTime(140, t);
+    o.frequency.exponentialRampToValueAtTime(40, t + 0.08);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.9, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    o.connect(g); g.connect(this.bgGain); o.start(t); o.stop(t + 0.3);
+  }
+  _snare(t) {
+    const src = this.ac.createBufferSource(); src.buffer = this._noiseBuffer;
+    const filt = this.ac.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = 2800; filt.Q.value = 0.8;
+    const g = this.ac.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.55, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    src.connect(filt); filt.connect(g); g.connect(this.bgGain);
+    src.start(t); src.stop(t + 0.22);
+  }
+  _hat(t, vol = 0.18) {
+    const src = this.ac.createBufferSource(); src.buffer = this._noiseBuffer;
+    const filt = this.ac.createBiquadFilter();
+    filt.type = 'highpass'; filt.frequency.value = 7000;
+    const g = this.ac.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.055);
+    src.connect(filt); filt.connect(g); g.connect(this.bgGain);
+    src.start(t); src.stop(t + 0.07);
+  }
+
+  // ── Track 0 — "ABYSS WALKER"  John Carpenter dark synth  52 BPM ──────────
+  // 16-step 8th-note grid, D minor, slow + ominous
+  _t0(step, t) {
+    const bl = this._beatLen;
+    const bass = [73.42,0,0,0,0,0,0,0, 110.0,0,0,0,0,0,0,0];
+    if (bass[step]) this._noteRev(t, bass[step], bl * 7.5, 0.50);
+    const arp  = [146.83,0,174.61,0,220.0,0,261.63,0, 293.66,0,220.0,0,174.61,0,146.83,0];
+    if (arp[step])  this._noteRev(t, arp[step],  bl * 1.7, 0.16);
+    if (step === 0) this._pad(t, 146.83, bl * 7.8, 0.22);
+    if (step === 8) this._pad(t, 110.0,  bl * 7.8, 0.20);
+    const high = [0,0,0,0,523.25,0,0,0, 0,0,0,0,440.0,0,0,0];
+    if (high[step]) this._noteRev(t, high[step], bl * 3.2, 0.08);
+  }
+
+  // ── Track 1 — "CRYSTAL NEBULA"  Vangelis cosmic pads  48 BPM ────────────
+  // A minor, slow ascending arps, shimmering octaves, wide pads
+  _t1(step, t) {
+    const bl = this._beatLen;
+    const bass = [110.0,0,0,0,0,0,0,0, 82.41,0,0,0,0,0,0,0];
+    if (bass[step]) this._noteRev(t, bass[step], bl * 7.5, 0.42);
+    const arp  = [220.0,0,0,261.63,0,0,329.63,0, 392.0,0,0,329.63,0,0,261.63,0];
+    if (arp[step]) {
+      this._noteRev(t, arp[step],     bl * 2.4, 0.14);
+      this._noteRev(t, arp[step] * 2, bl * 1.8, 0.06);
+    }
+    if (step === 0) { this._pad(t, 220.0, bl*8, 0.18); this._pad(t, 261.63, bl*8, 0.11); }
+    if (step === 8) { this._pad(t, 196.0, bl*8, 0.16); this._pad(t, 246.94, bl*8, 0.10); }
+    const twink = [0,0,0,0,0,880.0,0,0, 0,0,0,0,1046.5,0,0,0];
+    if (twink[step]) this._noteRev(t, twink[step], bl * 1.2, 0.06);
+  }
+
+  // ── Track 2 — "SILICON VOID"  Tangerine Dream sequenced ambient  44 BPM ──
+  // F minor, sawtooth bass sequence, drifting pads, sparse bells
+  _t2(step, t) {
+    const bl = this._beatLen;
+    const bass = [87.31,0,0,0,130.81,0,0,0, 98.0,0,0,0,116.54,0,0,0];
+    if (bass[step]) this._noteRev(t, bass[step], bl * 3.5, 0.44, 'sawtooth');
+    const arp  = [174.61,0,261.63,0,392.0,0,233.08,0, 196.0,0,261.63,0,174.61,0,0,0];
+    if (arp[step])  this._noteRev(t, arp[step],  bl * 1.9, 0.13, 'sawtooth');
+    if (step === 0) this._pad(t, 174.61, bl * 8, 0.20);
+    if (step === 8) this._pad(t, 130.81, bl * 8, 0.18);
+    if (step === 0) this._noteRev(t, 1046.5, bl * 6, 0.05);
+  }
+
+  // ── Track 3 — "NEON GRID"  Giorgio Moroder 80s techno  128 BPM ───────────
+  // D minor, full drums, driving bass arp, sawtooth lead + counter-melody
+  _t3(step, t) {
+    const bl = this._beatLen;
+    if (step === 0 || step === 8)  this._kick(t);
+    if (step === 4 || step === 12) this._snare(t);
+    this._hat(t, step % 2 === 0 ? 0.22 : 0.12);
+    const bassArp = [36.71,55.0,43.65,55.0,36.71,55.0,43.65,55.0,
+                     36.71,55.0,43.65,55.0,36.71,55.0,43.65,55.0];
+    this._note(t, bassArp[step], bl * 0.85, 0.55, 'sawtooth', this.bgGain);
+    const lead = [293.66,0,0,0,349.23,0,0,0, 440.0,0,0,0,392.0,0,293.66,0];
+    if (lead[step]) {
+      this._noteRev(t, lead[step],     bl * 1.7, 0.22, 'sawtooth');
+      this._noteRev(t, lead[step] / 2, bl * 1.7, 0.10);
+    }
+    const ctr = [0,587.33,0,0,0,698.46,0,0, 0,880.0,0,0,0,784.0,0,0];
+    if (ctr[step]) this._noteRev(t, ctr[step], bl * 0.9, 0.12, 'sawtooth');
+  }
+
+  // ── Sequencer ─────────────────────────────────────────────────
+  playTrack(idx) {
+    this.init();
+    if (idx === this._trackIdx) return;
+    this._stopSeq();
+    this._trackIdx = idx;
+    if (idx < 0) return;
+    this.bgGain.gain.cancelScheduledValues(this.ac.currentTime);
+    this.bgGain.gain.setValueAtTime(0.48, this.ac.currentTime);
+    const meta = [
+      { beatLen: 60/52/2,  steps: 16 },   // 0: 52 BPM  — Abyss Walker
+      { beatLen: 60/48/2,  steps: 16 },   // 1: 48 BPM  — Crystal Nebula
+      { beatLen: 60/44/2,  steps: 16 },   // 2: 44 BPM  — Silicon Void
+      { beatLen: 60/128/2, steps: 16 },   // 3: 128 BPM — Neon Grid
+    ][idx] || { beatLen: 60/60/2, steps: 16 };
+    this._beatLen = meta.beatLen; this._steps = meta.steps;
+    this._beatIdx = 0; this._nextBeat = this.ac.currentTime + 0.12;
+    this._tick();
+  }
+
+  _tick() {
+    while (this._nextBeat < this.ac.currentTime + 0.14) {
+      [this._t0, this._t1, this._t2, this._t3][this._trackIdx]
+        ?.call(this, this._beatIdx, this._nextBeat);
+      this._nextBeat += this._beatLen;
+      this._beatIdx = (this._beatIdx + 1) % this._steps;
+    }
+    this._seqId = setTimeout(() => this._tick(), 55);
+  }
+
+  _stopSeq() {
+    clearTimeout(this._seqId); this._seqId = null; this._trackIdx = -1;
+  }
+
+  stop() {
+    this._stopSeq();
+    if (!this._ready) return;
+    this.bgGain.gain.setTargetAtTime(0, this.ac.currentTime, 0.5);
+    setTimeout(() => {
+      if (this._ready) this.bgGain.gain.setValueAtTime(0.48, this.ac.currentTime);
+    }, 2500);
+  }
+
+  // ── SFX ───────────────────────────────────────────────────────
+  sfxLaser() {
+    if (!this._ready) return;
+    const t = this.ac.currentTime;
+    if (t - this._lastLaser < 0.09) return;
+    this._lastLaser = t;
+    const o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(1400, t);
+    o.frequency.exponentialRampToValueAtTime(380, t + 0.10);
+    g.gain.setValueAtTime(0.28, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    o.connect(g); g.connect(this.fxGain); o.start(t); o.stop(t + 0.14);
+  }
+
+  sfxCrash() {
+    if (!this._ready) return;
+    const t = this.ac.currentTime;
+    const src = this.ac.createBufferSource(); src.buffer = this._noiseBuffer;
+    const filt = this.ac.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = 700; filt.Q.value = 0.6;
+    const g = this.ac.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.9, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    src.connect(filt); filt.connect(g); g.connect(this.fxGain);
+    src.start(t); src.stop(t + 0.42);
+    const o = this.ac.createOscillator(), g2 = this.ac.createGain();
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(25, t + 0.28);
+    g2.gain.setValueAtTime(0.7, t); g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+    o.connect(g2); g2.connect(this.fxGain); o.start(t); o.stop(t + 0.32);
+  }
+
+  sfxPickup() {
+    if (!this._ready) return;
+    const t = this.ac.currentTime;
+    const o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(660, t);
+    o.frequency.exponentialRampToValueAtTime(1320, t + 0.14);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.38, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    o.connect(g); g.connect(this.fxGain); o.start(t); o.stop(t + 0.25);
+  }
+
+  sfxCrystal() {
+    if (!this._ready) return;
+    const t = this.ac.currentTime;
+    const o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(1760, t);
+    o.frequency.exponentialRampToValueAtTime(2640, t + 0.05);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.22, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g); g.connect(this.fxGain); o.start(t); o.stop(t + 0.20);
+  }
+
+  sfxExtraLife() {
+    if (!this._ready) return;
+    const t = this.ac.currentTime;
+    // C-E-G fanfare in square wave — classic 8-bit extra life
+    [[261.63, 0], [329.63, 0.13], [523.25, 0.26]].forEach(([f, d]) => {
+      const o = this.ac.createOscillator(), g = this.ac.createGain();
+      o.type = 'square'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.linearRampToValueAtTime(0.28, t + d + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.22);
+      o.connect(g); g.connect(this.fxGain); o.start(t + d); o.stop(t + d + 0.26);
+    });
+  }
+
+  sfxMultiplier(mult) {
+    if (!this._ready) return;
+    const t    = this.ac.currentTime;
+    const freq = 440 * Math.pow(1.5, Math.round(mult) - 1);
+    const o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.38, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.48);
+    o.connect(g); g.connect(this.fxGain); o.start(t); o.stop(t + 0.52);
+    const o2 = this.ac.createOscillator(), g2 = this.ac.createGain();
+    o2.type = 'sine'; o2.frequency.value = freq * 2;
+    g2.gain.setValueAtTime(0.0001, t + 0.05); g2.gain.linearRampToValueAtTime(0.14, t + 0.06);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    o2.connect(g2); g2.connect(this.fxGain); o2.start(t + 0.05); o2.stop(t + 0.42);
+  }
+}
+
+const AUDIO = new AudioEngine();
 
 // ── Boot ─────────────────────────────────────────────────────
 let G = null;
