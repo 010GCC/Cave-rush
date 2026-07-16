@@ -5,14 +5,15 @@
 
 const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
+const gameWindow = document.getElementById('game-window');
 
 // ── Globals (set by resize) ──────────────────────────────────
 let W, H, DRONE_Y, PANEL_Y;
 const HUD_H = 54;   // px reserved for top header bar
 
 function resize() {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
+  W = canvas.width  = gameWindow.clientWidth;
+  H = canvas.height = gameWindow.clientHeight;
   // bottom dashboard panel top (mirrors DPad.resize calculation)
   PANEL_Y = H - Math.min(H * 0.26, 190) - 8;
   // drone Y sits 60% down the playable area (between header and panel)
@@ -1097,8 +1098,9 @@ class DPad {
 
   _track(e) {
     for (const t of e.changedTouches) {
-      this.touchMap[t.identifier] = { x: t.clientX * (W / window.innerWidth),
-                                       y: t.clientY * (H / window.innerHeight) };
+      const rect = canvas.getBoundingClientRect();
+      this.touchMap[t.identifier] = { x: (t.clientX - rect.left) * (W / rect.width),
+                                       y: (t.clientY - rect.top)  * (H / rect.height) };
     }
     this._calc();
   }

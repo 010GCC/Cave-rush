@@ -14,20 +14,29 @@
     }
     html, body {
       width: 100%; height: 100%;
-      background: #000;
+      background: #050a10;
       overflow: hidden;
       display: flex;
       justify-content: center;
       align-items: center;
     }
+    #game-window {
+      position: relative;
+      --gh: min(710px, 96vh);
+      height: var(--gh);
+      width: calc(var(--gh) * 9 / 16);
+      box-shadow: 0 0 60px rgba(0,255,255,0.08), 0 0 120px rgba(0,0,0,0.8);
+    }
     canvas {
       display: block;
+      width: 100%;
+      height: 100%;
       touch-action: none;
     }
 
     /* ── Overlay Screens ───────────────────────────────────── */
     #screen {
-      position: fixed;
+      position: absolute;
       inset: 0;
       display: flex;
       flex-direction: column;
@@ -98,7 +107,7 @@
 
     /* ── HUD ────────────────────────────────────────────────── */
     #hud {
-      position: fixed;
+      position: absolute;
       top: 0; left: 0; right: 0;
       display: flex;
       justify-content: space-between;
@@ -141,19 +150,21 @@
   </style>
 </head>
 <body>
-  <canvas id="c"></canvas>
+  <div id="game-window">
+    <canvas id="c"></canvas>
 
-  <!-- Main Menu / Game Over / Level Complete all share this panel -->
-  <div id="screen">
-    <div class="title">CAVE RUSH</div>
-    <div class="subtitle">DEEP EARTH EXPLORATION</div>
-    <button class="btn" id="btnStart">START</button>
-    <button class="btn secondary" id="btnHow">HOW TO PLAY</button>
-    <div class="hi-line" id="hiLine"></div>
+    <!-- Main Menu / Game Over / Level Complete all share this panel -->
+    <div id="screen">
+      <div class="title">CAVE RUSH</div>
+      <div class="subtitle">DEEP EARTH EXPLORATION</div>
+      <button class="btn" id="btnStart">START</button>
+      <button class="btn secondary" id="btnHow">HOW TO PLAY</button>
+      <div class="hi-line" id="hiLine"></div>
+    </div>
+
+    <!-- HUD (hidden — replaced by canvas dashboard) -->
+    <div id="hud" class="hidden"></div>
   </div>
-
-  <!-- HUD (hidden — replaced by canvas dashboard) -->
-  <div id="hud" class="hidden"></div>
 
   <script src="game.js"></script>
 </body>
