@@ -36,19 +36,20 @@ Open the link on your phone for fullscreen play, or on desktop for a centered po
 No build step — static HTML/JS.
 
 ```bash
-# from the repo root
+# Prefer the master branch (or copy game.js from master) for fully offline play:
+#   git checkout master   # or download game.js from master
 python3 -m http.server 8080
 # then open http://localhost:8080
 ```
 
-Or open `index.html` directly in a modern browser (some browsers restrict `localStorage` on `file://`; a local server is preferred).
+> **Note:** On `main`, `game.js` is a thin loader that fetches a pinned copy of the full game from the `master` branch via jsDelivr (API upload size limits). For fully offline/local play, copy `game.js` from `master` into the repo root.
 
 ## Project layout
 
 | File | Role |
 |------|------|
 | `index.html` | Shell, CSS overlays, mobile/desktop viewport sizing |
-| `game.js` | Full game: loop, cave, drone, enemies, audio, touch UI |
+| `game.js` | Full game on `master`; on `main` a pinned CDN loader until inlined |
 | `Claude.md` | Project conventions for AI-assisted development |
 | `CNAME` | GitHub Pages custom domain (`caverush.cc`) |
 
