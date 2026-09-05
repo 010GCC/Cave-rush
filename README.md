@@ -41,7 +41,7 @@ python3 -m http.server 8080
 # then open http://localhost:8080
 ```
 
-Or open `index.html` directly in a modern browser (some browsers restrict modules/`localStorage` on `file://`; a local server is preferred).
+Or open `index.html` directly in a modern browser (some browsers restrict `localStorage` on `file://`; a local server is preferred).
 
 ## Project layout
 
@@ -56,7 +56,7 @@ Or open `index.html` directly in a modern browser (some browsers restrict module
 
 - **Mobile:** `#game-window` fills the dynamic viewport (`100dvh` / full width) for true fullscreen play, with `viewport-fit=cover` for notched devices.
 - **Desktop:** a centered ~9:16 phone frame (max ~710px tall) so the HUD and D-pad stay usable without stretching across ultrawide monitors.
-- Canvas resolution follows the container; `resize()` also listens to `visualViewport` so mobile browser chrome show/hide recalculates layout.
+- Canvas resolution follows the container; `index.html` bridges `visualViewport` resize/scroll to `window.resize` so mobile browser chrome show/hide recalculates layout.
 
 ## Tech
 
