@@ -192,5 +192,14 @@
   </div>
 
   <script src="game.js"></script>
+  <script>
+    // Mobile browser chrome often changes visualViewport without window.resize.
+    // Bridge those events so game.js resize() keeps the canvas fullscreen.
+    if (window.visualViewport) {
+      var bridge = function () { window.dispatchEvent(new Event('resize')); };
+      window.visualViewport.addEventListener('resize', bridge);
+      window.visualViewport.addEventListener('scroll', bridge);
+    }
+  </script>
 </body>
 </html>
