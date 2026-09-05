@@ -2,9 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#050a10">
   <title>Cave Rush</title>
   <style>
     * {
@@ -13,19 +15,37 @@
       user-select: none; -webkit-user-select: none;
     }
     html, body {
-      width: 100%; height: 100%;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      min-height: 100%;
+      min-height: 100dvh;
       background: #050a10;
       overflow: hidden;
       display: flex;
       justify-content: center;
       align-items: center;
     }
+    /* Mobile-first: fill the visible viewport (fullscreen play surface) */
     #game-window {
       position: relative;
-      --gh: min(710px, 96vh);
-      height: var(--gh);
-      width: calc(var(--gh) * 9 / 16);
-      box-shadow: 0 0 60px rgba(0,255,255,0.08), 0 0 120px rgba(0,0,0,0.8);
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      max-width: 100vw;
+      max-height: 100dvh;
+      box-shadow: none;
+    }
+    /* Desktop: keep a centered portrait phone frame so the UI isn't stretched */
+    @media (min-width: 520px) and (hover: hover) and (pointer: fine) {
+      #game-window {
+        --gh: min(710px, 96dvh, 96vh);
+        height: var(--gh);
+        width: min(calc(var(--gh) * 9 / 16), 96vw);
+        max-width: none;
+        max-height: none;
+        box-shadow: 0 0 60px rgba(0,255,255,0.08), 0 0 120px rgba(0,0,0,0.8);
+      }
     }
     canvas {
       display: block;
@@ -48,6 +68,8 @@
       z-index: 10;
       gap: 10px;
       padding: 20px;
+      padding-top: max(20px, env(safe-area-inset-top));
+      padding-bottom: max(20px, env(safe-area-inset-bottom));
     }
     #screen.hidden { display: none; }
 
@@ -93,6 +115,8 @@
       text-transform: uppercase;
       margin: 4px;
       transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
     }
     .btn:active, .btn:focus { background: rgba(0,255,255,0.12); outline: none; }
     .btn.secondary { border-color: #224466; color: #4488aa; font-size: 13px; }
@@ -113,6 +137,7 @@
       justify-content: space-between;
       align-items: flex-start;
       padding: 8px 14px 0;
+      padding-top: max(8px, env(safe-area-inset-top));
       z-index: 5;
       pointer-events: none;
       font-family: 'Courier New', monospace;
@@ -167,5 +192,14 @@
   </div>
 
   <script src="game.js"></script>
+  <script>
+    // Mobile browser chrome often changes visualViewport without window.resize.
+    // Bridge those events so game.js resize() keeps the canvas fullscreen.
+    if (window.visualViewport) {
+      var bridge = function () { window.dispatchEvent(new Event('resize')); };
+      window.visualViewport.addEventListener('resize', bridge);
+      window.visualViewport.addEventListener('scroll', bridge);
+    }
+  </script>
 </body>
 </html>
